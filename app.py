@@ -58,7 +58,8 @@ def optimize_route(df, start_lat, start_lon, total_minutes):
 # --- 2. YAPAY ZEKA VERİ ÜRETİM MOTORU ---
 def get_dynamic_places_from_ai(target_city, user_prompt):
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash') 
+        # HATA DÜZELTİLDİ: Model sürümü 3.6 olarak güncellendi.
+        model = genai.GenerativeModel('gemini-3.6-flash') 
     except Exception as e:
         st.error(f"Model yüklenirken hata oluştu: {e}")
         return pd.DataFrame()
@@ -84,7 +85,6 @@ def get_dynamic_places_from_ai(target_city, user_prompt):
         response = model.generate_content(prompt)
         raw_text = response.text.strip()
         
-        # GITHUB HATASINI ÇÖZEN KISIM: Ters tırnakları ASCII koduyla (chr 96) üretiyoruz
         ticks = chr(96) * 3
         raw_text = raw_text.replace(ticks + "json", "").replace(ticks, "").strip()
             
