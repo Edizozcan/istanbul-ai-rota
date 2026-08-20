@@ -8,9 +8,9 @@ import folium
 from streamlit_folium import folium_static 
 import io
 
-# ReportLab kütüphaneleri (PDF üretimi için)
+# ReportLab kütüphaneleri
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
@@ -61,68 +61,113 @@ def optimize_route(df, start_lat, start_lon, total_minutes):
             
     return pd.DataFrame(route)
 
-# --- 2. PDF ÜRETİM FONKSİYONU ---
-def generate_pdf_report(gun_no, sehir_adi, rota_df, start_dt, start_time_input):
+# --- 2. TÜRKÇE KARAKTER TEMİZLEME (PDF İÇİN) ---
+def tr_to_en(text):
+    tr_chars = {'ş': 's', 'Ş': 'S', 'ğ': 'g', 'Ğ': 'G', 'ü': 'u', 'Ü': 'U', 
+                'ş': 's', 'Ş': 'S', 'İ': 'I', 'ı': 'i', 'ö': 'o', 'Ö': 'O', 
+                'ç': 'c', 'Ç': 'C'}
+    for key, value in tr_chars.items():
+        text = text.replace(key, value)
+    return text
+
+# --- 3. TEK PARÇA TÜM SEYAHATİ PDF YAPMA FONKSİYONU ---
+def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_input):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
     story = []
     
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
-        'TitleStyle',
+        'BookletTitle',
         parent=styles['Heading1'],
-        fontSize=20,
+        fontSize=24,
         textColor=colors.HexColor("#1f4e78"),
-        spaceAfter=15
+        spaceAfter=10,
+        alignment=1 # Ortala
     )
     subtitle_style = ParagraphStyle(
-        'SubTitleStyle',
+        'BookletSub',
         parent=styles['Normal'],
         fontSize=12,
         textColor=colors.HexColor("#595959"),
-        spaceAfter=20
+        spaceAfter=25,
+        alignment=1
+    )
+    day_heading = ParagraphStyle(
+        'DayHeading',
+        parent=styles['Heading2'],
+        fontSize=16,
+        textColor=colors.HexColor("#2f5597"),
+        spaceAfter=10,
+        spaceBefore=10
     )
     
-    story.append(Paragraph(f"🌍 Seyahat Planı: Gün {gun_no} - {sehir_adi}", title_style))
-    story.append(Paragraph(f"Oluşturulma Tarihi: Global Rota Planlayıcı V2", subtitle_style))
-    story.append(Spacer(1, 10))
+    # Kapak / Başlık Bilgisi
+    story.append(Paragraph(tr_to_en("KURESEL SEYAHAT KITAPCIGI"), title_style))
+    story.append(Paragraph(tr_to_en("Global Rota Planlayici V2 ile Otonom Olarak Olusturulmustur"), subtitle_style))
+    story.append(Spacer(1, 15))
     
-    # Tablo Verilerini Hazırlama
-    table_data = [["Saat Aralığı", "Durak Adı", "Kategori", "Geçiş / Ziyaret"]]
+    start_dt_base = pd.Timestamp(f"2000-01-01 {start_time_input}")
+    end_dt_base = pd.Timestamp(f"2000-01-01 {end_time_input}")
+    total_available_minutes = int((end_dt_base - start_dt_base).total_seconds() / 60)
     
-    current_time = pd.Timestamp(f"2000-01-01 {start_time_input}")
-    for idx, row in rota_df.iterrows():
-        current_time += timedelta(minutes=int(row['travel_time']))
-        varis_saati = current_time.strftime('%H:%M')
-        current_time += timedelta(minutes=int(row['ort_sure']))
-        cikis_saati = current_time.strftime('%H:%M')
+    for i, day_data in enumerate(multi_day_plan):
+        gun_no = day_data['gun']
+        sehir_adi = day_data['sehir']
+        df_day = pd.DataFrame(day_data['mekanlar'])
         
-        durak_str = f"{idx+1}. {row['name']}"
-        zaman_str = f"{varis_saati} - {cikis_saati}"
-        sure_str = f"Geçiş: {int(row['travel_time'])}dk | Süre: {row['ort_sure']}dk"
+        if df_day.empty:
+            continue
+            
+        baslangic_lat = df_day.iloc[0]['lat']
+        baslangic_lon = df_day.iloc[0]['lon']
         
-        table_data.append([zaman_str, durak_str, row['kategori'], sure_str])
+        gunluk_rota = optimize_route(df_day, baslangic_lat, baslangic_lon, total_available_minutes)
         
-    t = Table(table_data, colWidths=[90, 180, 100, 185])
-    t.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2f5597")),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-        ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor("#f2f2f2")),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-        ('FONTSIZE', (0, 0), (-1, -1), 10),
-        ('TOPPADDING', (0, 1), (-1, -1), 6),
-        ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
-    ]))
-    
-    story.append(t)
+        story.append(Paragraph(tr_to_en(f"Gun {gun_no} - Sehir: {sehir_adi}"), day_heading))
+        
+        table_data = [[tr_to_en("Saat Araligi"), tr_to_en("Durak Adi"), tr_to_en("Kategori"), tr_to_en("Gecis / Ziyaret")]]
+        
+        current_time = start_dt_base
+        for idx, row in gunluk_rota.iterrows():
+            current_time += timedelta(minutes=int(row['travel_time']))
+            varis_saati = current_time.strftime('%H:%M')
+            current_time += timedelta(minutes=int(row['ort_sure']))
+            cikis_saati = current_time.strftime('%H:%M')
+            
+            zaman_str = f"{varis_saati} - {cikis_saati}"
+            durak_str = tr_to_en(f"{idx+1}. {row['name']}")
+            kat_str = tr_to_en(str(row['kategori']))
+            sure_str = tr_to_en(f"Yol: {int(row['travel_time'])}dk | Sure: {row['ort_sure']}dk")
+            
+            table_data.append([zaman_str, durak_str, kat_str, sure_str])
+            
+        t = Table(table_data, colWidths=[85, 190, 100, 180])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2f5597")),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor("#f9f9f9")),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('TOPPADDING', (0, 1), (-1, -1), 5),
+            ('BOTTOMPADDING', (0, 1), (-1, -1), 5),
+        ]))
+        
+        story.append(t)
+        story.append(Spacer(1, 15))
+        
+        # Her günden sonra yeni sayfaya geç (Son gün hariç)
+        if i < len(multi_day_plan) - 1:
+            story.append(PageBreak())
+            
     doc.build(story)
     buffer.seek(0)
     return buffer.getvalue()
 
-# --- 3. YAPAY ZEKA ÇOKLU GÜN VERİ ÜRETİM MOTORU ---
+# --- 4. YAPAY ZEKA ÇOKLU GÜN VERİ ÜRETİM MOTORU ---
 def get_multi_day_plan_from_ai(user_prompt):
     try:
         model = genai.GenerativeModel('gemini-3.6-flash') 
@@ -163,8 +208,8 @@ def get_multi_day_plan_from_ai(user_prompt):
         st.error(f"Yapay zeka planı oluştururken bir hata yaşadı: {e}")
         return []
 
-# --- 4. ARAYÜZ VE GİRDİLER ---
-st.set_page_config(page_title="Global Rota Planlayıcı V2 + PDF", layout="wide", initial_sidebar_state="expanded")
+# --- 5. ARAYÜZ VE GİRDİLER ---
+st.set_page_config(page_title="Global Rota Planlayıcı V2 + Kitapçık PDF", layout="wide", initial_sidebar_state="expanded")
 
 with st.sidebar:
     st.header("🌍 Büyük Avrupa Turu")
@@ -185,23 +230,36 @@ with st.sidebar:
     )
     
     st.markdown("---")
-    generate_btn = st.button("Devasa Planı ve Raporu Oluştur 🚀", use_container_width=True)
+    generate_btn = st.button("Devasa Planı ve Kitapçığı Oluştur 🚀", use_container_width=True)
 
-# --- 5. ANA UYGULAMA MANTIĞI VE SEKMELER ---
-st.title("🗺️ Global Rota Planlayıcı V2 (Çoklu Şehir & PDF İndirme)")
-st.caption("Yapay zeka planınızı gün gün hazırlar, haritalandırır ve PDF olarak indirmenizi sağlar.")
+# --- 6. ANA UYGULAMA MANTIĞI VE SEKMELER ---
+st.title("🗺️ Global Rota Planlayıcı V2 (Çoklu Şehir & Tekli PDF Kitapçık)")
+st.caption("Yapay zeka planınızı gün gün hazırlar, sekmelerde sunar ve tüm turu tek bir profesyonel PDF kitapçık olarak indirmenizi sağlar.")
 
 if generate_btn:
     if not user_ai_prompt:
         st.error("Lütfen hayalinizdeki seyahat planını yazın!")
     else:
-        with st.spinner("🧠 Yapay zeka tüm günleri planlıyor ve PDF raporlarını hazırlıyor..."):
+        with st.spinner("🧠 Yapay zeka tüm günleri planlıyor ve kapsamlı PDF kitapçığını derliyor..."):
             multi_day_plan = get_multi_day_plan_from_ai(user_ai_prompt)
             
             if not multi_day_plan:
                 st.warning("Veri çekilemedi. Lütfen tekrar deneyin.")
             else:
                 st.balloons()
+                
+                # --- ANA SAYFADA TÜM TURU TEK PDF OLARAK İNDİRME BUTONU ---
+                full_pdf_bytes = generate_full_travel_booklet(multi_day_plan, start_time, end_time)
+                st.success("🎉 Devasa seyahat planınız başarıyla oluşturuldu! Aşağıdaki butondan tüm turu tek bir PDF Kitapçık olarak indirebilirsiniz:")
+                st.download_button(
+                    label="📥 TÜM SEYAHATİ PDF KİTAPÇIK OLARAK İNDİR (TÜM GÜNLER)",
+                    data=full_pdf_bytes,
+                    file_name="Avrupa_Turu_Seyahat_Kitapcigi.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+                st.markdown("---")
+                
                 tab_titles = [f"📅 Gün {day['gun']} ({day['sehir']})" for day in multi_day_plan]
                 tabs = st.tabs(tab_titles)
                 
@@ -261,14 +319,3 @@ if generate_btn:
                                         f"**{varis_saati} - {cikis_saati}** | 📍 {idx+1}. {row['name']}\n\n"
                                         f"*Kategori: {row['kategori']} | Geçiş: {int(row['travel_time'])} dk*"
                                     )
-                                    
-                                # --- PDF İNDİRME BUTONU ---
-                                pdf_bytes = generate_pdf_report(day_data['gun'], city_name, gunluk_rota, start_dt, start_time)
-                                st.download_button(
-                                    label=f"📄 Gün {day_data['gun']} Planını PDF İndir",
-                                    data=pdf_bytes,
-                                    file_name=f"Gun_{day_data['gun']}_{city_name}_Rotasi.pdf",
-                                    mime="application/pdf",
-                                    use_container_width=True,
-                                    key=f"pdf_btn_{day_data['gun']}_{i}"
-                                )
