@@ -33,7 +33,7 @@ def optimize_route(df, start_lat, start_lon, total_minutes):
         )
         nearest = unvisited.loc[unvisited['distance_km'].idxmin()]
         
-        # Ortalama şehir içi hızları (Uzaksa araç 25km/s, yakınsa yürüme 4km/s)
+        # Ortalama şehir içi hızları
         if nearest['distance_km'] > 3.0:
             travel_time = int((nearest['distance_km'] / 25.0) * 60)
         else:
@@ -86,5 +86,5 @@ def get_dynamic_places_from_ai(target_city, user_prompt):
         response = model.generate_content(prompt)
         raw_text = response.text.strip()
         
-   # LLM'lerin eklediği Markdown etiketlerini tek satırda güvenle temizliyoruz
-        raw_text = raw_text.replace("```json", "").replace("```", "").strip()
+        # LLM'lerin eklediği Markdown etiketlerini güvenle temizliyoruz
+        raw_text = raw_text.replace("```json", "").replace("
