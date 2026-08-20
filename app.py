@@ -58,7 +58,6 @@ def optimize_route(df, start_lat, start_lon, total_minutes):
 # --- 2. YAPAY ZEKA VERİ ÜRETİM MOTORU ---
 def get_dynamic_places_from_ai(target_city, user_prompt):
     try:
-        # HATA DÜZELTİLDİ: Model sürümü 3.6 olarak güncellendi.
         model = genai.GenerativeModel('gemini-3.6-flash') 
     except Exception as e:
         st.error(f"Model yüklenirken hata oluştu: {e}")
@@ -136,7 +135,8 @@ if generate_btn:
             if dinamik_df.empty:
                 st.warning("Veri çekilemedi. Lütfen farklı bir prompt ile tekrar deneyin.")
             else:
-                geolocator = Nominatim(user_agent="global_rota_app")
+                # Zaman aşımını (timeout) artırdık ve özel bir user_agent tanımladık
+                geolocator = Nominatim(user_agent="kontrol_atak_global_rota_v1", timeout=10)
                 try:
                     search_query = f"{start_location}, {target_city}"
                     location = geolocator.geocode(search_query)
@@ -145,12 +145,14 @@ if generate_btn:
                         baslangic_lat, baslangic_lon = location.latitude, location.longitude
                         st.success(f"📍 Başlangıç Tespit Edildi: {location.address}")
                     else:
-                        st.warning(f"Otel konumu bulunamadı, {target_city} merkezi baz alınıyor.")
-                        city_loc = geolocator.geocode(target_city)
-                        baslangic_lat, baslangic_lon = city_loc.latitude, city_loc.longitude
-                except:
-                    st.error("Konum servisine ulaşılamadı. Lütfen tekrar deneyin.")
-                    st.stop()
+                        st.warning(f"Otel konumu tam bulunamadı, yapay zekanın önerdiği ilk mekan başlangıç kabul ediliyor.")
+                        baslangic_lat = dinamik_df.iloc[0]['lat']
+                        baslangic_lon = dinamik_df.iloc[0]['lon']
+                except Exception as e:
+                    # ÇÖKME KORUMASI: Harita API'si çökse bile program çalışmaya devam edecek!
+                    st.warning("Harita arama servisi şu an yoğun. Başlangıç noktası olarak rotadaki ilk mekan baz alınıyor.")
+                    baslangic_lat = dinamik_df.iloc[0]['lat']
+                    baslangic_lon = dinamik_df.iloc[0]['lon']
 
                 start_dt = pd.Timestamp(f"2000-01-01 {start_time}")
                 end_dt = pd.Timestamp(f"2000-01-01 {end_time}")
@@ -168,7 +170,7 @@ if generate_btn:
                         st.subheader(f"{target_city} Günlük Rotası")
                         
                         map_center = [gunluk_rota['lat'].mean(), gunluk_rota['lon'].mean()]
-                        m = folium.Map(location=map_center, zoom_start=14)
+                        m = folium.Map(location=map_center, zoom_start=13)
                         
                         route_coords = []
                         
@@ -196,7 +198,7 @@ if generate_btn:
                     with timeline_col:
                         st.subheader("Zaman Çizelgesi")
                         current_time = start_dt
-                        st.info(f"**{current_time.strftime('%H:%M')}** | 🚶‍♂️ Güne Başlangıç\n\n*{start_location} ({target_city}) konumundan hareket*")
+                        st.info(f"**{current_time.strftime('%H:%M')}** | 🚶‍♂️ Güne Başlangıç\n\n*{start_location} ({target_city}) civarından hareket*")
                         
                         for idx, row in gunluk_rota.iterrows():
                             current_time += timedelta(minutes=int(row['travel_time']))
