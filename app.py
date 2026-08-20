@@ -6,6 +6,13 @@ from datetime import time, timedelta
 import google.generativeai as genai
 import folium
 from streamlit_folium import folium_static 
+import io
+
+# ReportLab kütüphaneleri (PDF üretimi için)
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
 # --- GÜVENLİ API AYARLARI ---
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
@@ -54,9 +61,69 @@ def optimize_route(df, start_lat, start_lon, total_minutes):
             
     return pd.DataFrame(route)
 
-# --- 2. YAPAY ZEKA ÇOKLU GÜN VERİ ÜRETİM MOTORU ---
+# --- 2. PDF ÜRETİM FONKSİYONU ---
+def generate_pdf_report(gun_no, sehir_adi, rota_df, start_dt, start_time_input):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    story = []
+    
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'TitleStyle',
+        parent=styles['Heading1'],
+        fontSize=20,
+        textColor=colors.HexColor("#1f4e78"),
+        spaceAfter=15
+    )
+    subtitle_style = ParagraphStyle(
+        'SubTitleStyle',
+        parent=styles['Normal'],
+        fontSize=12,
+        textColor=colors.HexColor("#595959"),
+        spaceAfter=20
+    )
+    
+    story.append(Paragraph(f"🌍 Seyahat Planı: Gün {gun_no} - {sehir_adi}", title_style))
+    story.append(Paragraph(f"Oluşturulma Tarihi: Global Rota Planlayıcı V2", subtitle_style))
+    story.append(Spacer(1, 10))
+    
+    # Tablo Verilerini Hazırlama
+    table_data = [["Saat Aralığı", "Durak Adı", "Kategori", "Geçiş / Ziyaret"]]
+    
+    current_time = pd.Timestamp(f"2000-01-01 {start_time_input}")
+    for idx, row in rota_df.iterrows():
+        current_time += timedelta(minutes=int(row['travel_time']))
+        varis_saati = current_time.strftime('%H:%M')
+        current_time += timedelta(minutes=int(row['ort_sure']))
+        cikis_saati = current_time.strftime('%H:%M')
+        
+        durak_str = f"{idx+1}. {row['name']}"
+        zaman_str = f"{varis_saati} - {cikis_saati}"
+        sure_str = f"Geçiş: {int(row['travel_time'])}dk | Süre: {row['ort_sure']}dk"
+        
+        table_data.append([zaman_str, durak_str, row['kategori'], sure_str])
+        
+    t = Table(table_data, colWidths=[90, 180, 100, 185])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2f5597")),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor("#f2f2f2")),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('TOPPADDING', (0, 1), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
+    ]))
+    
+    story.append(t)
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+# --- 3. YAPAY ZEKA ÇOKLU GÜN VERİ ÜRETİM MOTORU ---
 def get_multi_day_plan_from_ai(user_prompt):
-    """Kullanıcının isteğini günlere ve şehirlere bölen kompleks JSON üretici."""
     try:
         model = genai.GenerativeModel('gemini-3.6-flash') 
     except Exception as e:
@@ -81,13 +148,6 @@ def get_multi_day_plan_from_ai(user_prompt):
                 {{"name": "Charles Bridge", "lat": 50.0865, "lon": 14.4114, "kategori": "Tarihi", "ort_sure": 45}},
                 {{"name": "Prague Castle", "lat": 50.0903, "lon": 14.3996, "kategori": "Müze", "ort_sure": 120}}
             ]
-        }},
-        {{
-            "gun": 2,
-            "sehir": "Viyana",
-            "mekanlar": [
-                {{"name": "Schönbrunn Sarayı", "lat": 48.1849, "lon": 16.3122, "kategori": "Tarihi", "ort_sure": 180}}
-            ]
         }}
     ]
     """
@@ -95,18 +155,16 @@ def get_multi_day_plan_from_ai(user_prompt):
     try:
         response = model.generate_content(prompt)
         raw_text = response.text.strip()
-        
         ticks = chr(96) * 3
         raw_text = raw_text.replace(ticks + "json", "").replace(ticks, "").strip()
-            
         plan_data = json.loads(raw_text)
         return plan_data
     except Exception as e:
         st.error(f"Yapay zeka planı oluştururken bir hata yaşadı: {e}")
         return []
 
-# --- 3. ARAYÜZ VE GİRDİLER ---
-st.set_page_config(page_title="Global Rota Planlayıcı V2", layout="wide", initial_sidebar_state="expanded")
+# --- 4. ARAYÜZ VE GİRDİLER ---
+st.set_page_config(page_title="Global Rota Planlayıcı V2 + PDF", layout="wide", initial_sidebar_state="expanded")
 
 with st.sidebar:
     st.header("🌍 Büyük Avrupa Turu")
@@ -122,35 +180,31 @@ with st.sidebar:
     st.subheader("🤖 Yapay Zeka Asistanı")
     user_ai_prompt = st.text_area(
         "Tüm seyahat planını detaylıca yaz:", 
-        placeholder="Örn: 3 gün Prag, 2 gün Viyana, 2 gün Budapeşte. Bol bol tarihi yer görelim ve yöresel lezzetler tadalım.",
+        placeholder="Örn: 3 gün Prag, 2 gün Viyana. Bol bol tarihi yer görelim.",
         height=130
     )
     
     st.markdown("---")
-    generate_btn = st.button("Devasa Planı Oluştur 🚀", use_container_width=True)
+    generate_btn = st.button("Devasa Planı ve Raporu Oluştur 🚀", use_container_width=True)
 
-# --- 4. ANA UYGULAMA MANTIĞI VE SEKMELER (TABS) ---
-st.title("🗺️ Global Rota Planlayıcı V2 (Çoklu Şehir & Çoklu Gün)")
-st.caption("Yapay zeka tüm seyahatinizi gün gün analiz eder ve her gün için ayrı bir harita çıkarır.")
+# --- 5. ANA UYGULAMA MANTIĞI VE SEKMELER ---
+st.title("🗺️ Global Rota Planlayıcı V2 (Çoklu Şehir & PDF İndirme)")
+st.caption("Yapay zeka planınızı gün gün hazırlar, haritalandırır ve PDF olarak indirmenizi sağlar.")
 
 if generate_btn:
     if not user_ai_prompt:
         st.error("Lütfen hayalinizdeki seyahat planını yazın!")
     else:
-        with st.spinner("🧠 Yapay zeka tüm günleri ve şehirleri planlıyor, koordinatları hesaplıyor (10-20 saniye sürebilir)..."):
-            
+        with st.spinner("🧠 Yapay zeka tüm günleri planlıyor ve PDF raporlarını hazırlıyor..."):
             multi_day_plan = get_multi_day_plan_from_ai(user_ai_prompt)
             
             if not multi_day_plan:
-                st.warning("Veri çekilemedi. Lütfen planınızı biraz daha basitleştirip tekrar deneyin.")
+                st.warning("Veri çekilemedi. Lütfen tekrar deneyin.")
             else:
                 st.balloons()
-                
-                # Dinamik Sekmeleri (Tabs) Oluşturma
                 tab_titles = [f"📅 Gün {day['gun']} ({day['sehir']})" for day in multi_day_plan]
                 tabs = st.tabs(tab_titles)
                 
-                # Her sekmenin içini kendi gününün verisiyle doldurma
                 for i, tab in enumerate(tabs):
                     with tab:
                         day_data = multi_day_plan[i]
@@ -158,10 +212,8 @@ if generate_btn:
                         df_day = pd.DataFrame(day_data['mekanlar'])
                         
                         if df_day.empty:
-                            st.warning(f"{city_name} için mekan bulunamadı.")
                             continue
                             
-                        # API Çökme Riskine Karşı Otomatik Başlangıç (O günün ilk mekanı)
                         baslangic_lat = df_day.iloc[0]['lat']
                         baslangic_lon = df_day.iloc[0]['lon']
                         
@@ -192,8 +244,6 @@ if generate_btn:
                                     ).add_to(m)
                                     
                                 folium.PolyLine(locations=route_coords, color="red", weight=4, opacity=0.7, dash_array='10').add_to(m)
-                                
-                                # Streamlit Folium'un sekme içinde düzgün çalışması için key ataması
                                 folium_static(m, width=550, height=450)
                                 
                             with timeline_col:
@@ -211,3 +261,14 @@ if generate_btn:
                                         f"**{varis_saati} - {cikis_saati}** | 📍 {idx+1}. {row['name']}\n\n"
                                         f"*Kategori: {row['kategori']} | Geçiş: {int(row['travel_time'])} dk*"
                                     )
+                                    
+                                # --- PDF İNDİRME BUTONU ---
+                                pdf_bytes = generate_pdf_report(day_data['gun'], city_name, gunluk_rota, start_dt, start_time)
+                                st.download_button(
+                                    label=f"📄 Gün {day_data['gun']} Planını PDF İndir",
+                                    data=pdf_bytes,
+                                    file_name=f"Gun_{day_data['gun']}_{city_name}_Rotasi.pdf",
+                                    mime="application/pdf",
+                                    use_container_width=True,
+                                    key=f"pdf_btn_{day_data['gun']}_{i}"
+                                )
