@@ -86,9 +86,5 @@ def get_dynamic_places_from_ai(target_city, user_prompt):
         response = model.generate_content(prompt)
         raw_text = response.text.strip()
         
-        # LLM'lerin bazen eklediği Markdown (```json) etiketlerini temizliyoruz
-        if raw_text.startswith("```json"):
-            raw_text = raw_text[7:]
-        if raw_text.startswith("```"):
-            raw_text = raw_text[3:]
-        if raw_text.endswith("
+   # LLM'lerin eklediği Markdown etiketlerini tek satırda güvenle temizliyoruz
+        raw_text = raw_text.replace("```json", "").replace("```", "").strip()
