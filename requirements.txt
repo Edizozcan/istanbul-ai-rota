@@ -6,3 +6,4 @@ reportlab
 supabase
 google-generativeai
 requests
+protobuf<4.21.0
