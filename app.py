@@ -7,6 +7,7 @@ import google.generativeai as genai
 import folium
 from streamlit_folium import folium_static
 import io
+import unicodedata
 
 # ReportLab kütüphaneleri
 from reportlab.lib.pagesizes import letter
@@ -78,11 +79,15 @@ def optimize_route(df, start_lat, start_lon, total_minutes):
     return pd.DataFrame(route)
 
 # --- 2. TÜRKÇE KARAKTER TEMİZLEME (PDF İÇİN) ---
+# --- 2. EVRENSEL KARAKTER TEMİZLEME (PDF İÇİN) ---
 def tr_to_en(text):
-    tr_chars = {'ş': 's', 'Ş': 'S', 'ğ': 'g', 'Ğ': 'G', 'ü': 'u', 'Ü': 'U', 
-                'İ': 'I', 'ı': 'i', 'ö': 'o', 'Ö': 'O', 'ç': 'c', 'Ç': 'C'}
-    for key, value in tr_chars.items():
-        text = text.replace(key, value)
+    text = str(text)
+    # Türkçe İ ve ı harfleri unicodedata ile sorun çıkarabilir, manuel düzeltiyoruz:
+    text = text.replace('ı', 'i').replace('İ', 'I')
+    
+    # Kalan tüm dillerdeki (Çekçe, Almanca vb.) aksanlı harfleri evrensel olarak temizler:
+    text = ''.join(c for c in unicodedata.normalize('NFKD', text) if unicodedata.category(c) != 'Mn')
+    
     return text
 
 # --- 3. TEK PARÇA TÜM SEYAHATİ PDF YAPMA FONKSİYONU ---
