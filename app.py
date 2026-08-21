@@ -8,6 +8,8 @@ import folium
 from streamlit_folium import folium_static
 import io
 import unicodedata
+import requests
+import time
 
 # ReportLab kütüphaneleri
 from reportlab.lib.pagesizes import letter
@@ -45,29 +47,55 @@ def haversine(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c 
 
+# --- YENİ: OSRM GERÇEK ROTA HESAPLAMA ---
+def get_osrm_travel_data(lat1, lon1, lat2, lon2, mode="walking"):
+    """OSRM API kullanarak iki koordinat arası gerçek yol süresini (dk) ve mesafeyi (km) çeker."""
+    url = f"http://router.project-osrm.org/route/v1/{mode}/{lon1},{lat1};{lon2},{lat2}?overview=false"
+    try:
+        time.sleep(0.1) # Ücretsiz genel sunucuyu boğmamak için milisaniyelik bekleme
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if data["code"] == "Ok":
+                duration_min = data["routes"][0]["duration"] / 60.0
+                distance_km = data["routes"][0]["distance"] / 1000.0
+                return int(duration_min), distance_km
+    except Exception as e:
+        print("OSRM API Hatası (Haversine'e dönülüyor):", e)
+        
+    # Eğer OSRM sunucusu meşgulse sistemin çökmemesi için eski Haversine formülüne dön (Yedek Sistem)
+    dist_km = haversine(lat1, lon1, lat2, lon2)
+    speed = 4.0 if mode == "walking" else 25.0
+    return int((dist_km / speed) * 60), dist_km
+
+# --- GÜNCELLENMİŞ OPTİMİZASYON MOTORU ---
 def optimize_route(df, start_lat, start_lon, total_minutes):
     unvisited = df.copy()
     current_lat, current_lon = start_lat, start_lon
     route = []
     
     while not unvisited.empty and total_minutes > 0:
-        unvisited['distance_km'] = unvisited.apply(
+        # 1. Hızlı Arama: En yakın noktayı bulmak için kuş uçuşu (Haversine) kullan
+        unvisited['temp_dist'] = unvisited.apply(
             lambda row: haversine(current_lat, current_lon, row['lat'], row['lon']), axis=1
         )
-        nearest = unvisited.loc[unvisited['distance_km'].idxmin()]
+        nearest = unvisited.loc[unvisited['temp_dist'].idxmin()]
         
-        if nearest['distance_km'] > 3.0:
-            travel_time = int((nearest['distance_km'] / 25.0) * 60)
-        else:
-            travel_time = int((nearest['distance_km'] / 4.0) * 60)
+        # 2. Gerçekçi Süre: En yakın noktaya karar verdikten sonra OSRM'den sokak bazlı süre çek
+        # Eğer mesafe 3 km'den uzunsa araçla (driving), kısaysa yürüyerek (walking) git
+        ulasim_modu = "driving" if nearest['temp_dist'] > 3.0 else "walking"
+        gercek_sure_dk, gercek_mesafe_km = get_osrm_travel_data(
+            current_lat, current_lon, nearest['lat'], nearest['lon'], mode=ulasim_modu
+        )
             
-        if travel_time < 2: travel_time = 2
+        if gercek_sure_dk < 2: gercek_sure_dk = 2 # Ne olursa olsun minimum 2 dk geçiş payı
             
-        time_needed = travel_time + nearest['ort_sure']
+        time_needed = gercek_sure_dk + nearest['ort_sure']
         
         if total_minutes >= time_needed:
             nearest_dict = nearest.to_dict()
-            nearest_dict['travel_time'] = travel_time
+            nearest_dict['travel_time'] = gercek_sure_dk
+            nearest_dict['ulasim_modu'] = "Araç" if ulasim_modu == "driving" else "Yürüme"
             route.append(nearest_dict)
             
             total_minutes -= time_needed
