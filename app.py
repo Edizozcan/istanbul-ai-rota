@@ -3,13 +3,13 @@ import pandas as pd
 import math
 import json
 from datetime import time, timedelta
+from time import sleep  # Çakışmayı önlemek için sadece sleep fonksiyonunu alıyoruz
 import google.generativeai as genai
 import folium
 from streamlit_folium import folium_static
 import io
 import unicodedata
 import requests
-import time
 
 # ReportLab kütüphaneleri
 from reportlab.lib.pagesizes import letter
@@ -37,7 +37,7 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
-# --- 1. MATEMATİKSEL VE OPTİMİZASYON FONKSİYONLARI ---
+# --- 1. MATEMATİKSEL, OSRM VE OPTİMİZASYON FONKSİYONLARI ---
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371.0
     lat1_rad, lon1_rad = math.radians(lat1), math.radians(lon1)
@@ -47,12 +47,11 @@ def haversine(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c 
 
-# --- YENİ: OSRM GERÇEK ROTA HESAPLAMA ---
 def get_osrm_travel_data(lat1, lon1, lat2, lon2, mode="walking"):
-    """OSRM API kullanarak iki koordinat arası gerçek yol süresini (dk) ve mesafeyi (km) çeker."""
+    """OSRM API kullanarak iki koordinat arası gerçek yol süresini çeker."""
     url = f"http://router.project-osrm.org/route/v1/{mode}/{lon1},{lat1};{lon2},{lat2}?overview=false"
     try:
-        time.sleep(0.1) # Ücretsiz genel sunucuyu boğmamak için milisaniyelik bekleme
+        sleep(0.1) # Ücretsiz sunucuyu boğmamak için milisaniyelik bekleme
         response = requests.get(url, timeout=5)
         if response.status_code == 200:
             data = response.json()
@@ -63,39 +62,37 @@ def get_osrm_travel_data(lat1, lon1, lat2, lon2, mode="walking"):
     except Exception as e:
         print("OSRM API Hatası (Haversine'e dönülüyor):", e)
         
-    # Eğer OSRM sunucusu meşgulse sistemin çökmemesi için eski Haversine formülüne dön (Yedek Sistem)
+    # Yedek Sistem: OSRM çokerse eski Haversine formülüne dön
     dist_km = haversine(lat1, lon1, lat2, lon2)
     speed = 4.0 if mode == "walking" else 25.0
     return int((dist_km / speed) * 60), dist_km
 
-# --- GÜNCELLENMİŞ OPTİMİZASYON MOTORU ---
 def optimize_route(df, start_lat, start_lon, total_minutes):
     unvisited = df.copy()
     current_lat, current_lon = start_lat, start_lon
     route = []
     
     while not unvisited.empty and total_minutes > 0:
-        # 1. Hızlı Arama: En yakın noktayı bulmak için kuş uçuşu (Haversine) kullan
+        # Hızlı Arama: En yakın noktayı kuş uçuşu (Haversine) ile bul
         unvisited['temp_dist'] = unvisited.apply(
             lambda row: haversine(current_lat, current_lon, row['lat'], row['lon']), axis=1
         )
         nearest = unvisited.loc[unvisited['temp_dist'].idxmin()]
         
-        # 2. Gerçekçi Süre: En yakın noktaya karar verdikten sonra OSRM'den sokak bazlı süre çek
-        # Eğer mesafe 3 km'den uzunsa araçla (driving), kısaysa yürüyerek (walking) git
+        # Gerçekçi Süre: OSRM'den sokak bazlı süre çek
         ulasim_modu = "driving" if nearest['temp_dist'] > 3.0 else "walking"
         gercek_sure_dk, gercek_mesafe_km = get_osrm_travel_data(
             current_lat, current_lon, nearest['lat'], nearest['lon'], mode=ulasim_modu
         )
             
-        if gercek_sure_dk < 2: gercek_sure_dk = 2 # Ne olursa olsun minimum 2 dk geçiş payı
+        if gercek_sure_dk < 2: gercek_sure_dk = 2
             
         time_needed = gercek_sure_dk + nearest['ort_sure']
         
         if total_minutes >= time_needed:
             nearest_dict = nearest.to_dict()
             nearest_dict['travel_time'] = gercek_sure_dk
-            nearest_dict['ulasim_modu'] = "Araç" if ulasim_modu == "driving" else "Yürüme"
+            nearest_dict['ulasim_modu'] = "Arac" if ulasim_modu == "driving" else "Yurume"
             route.append(nearest_dict)
             
             total_minutes -= time_needed
@@ -106,16 +103,11 @@ def optimize_route(df, start_lat, start_lon, total_minutes):
             
     return pd.DataFrame(route)
 
-# --- 2. TÜRKÇE KARAKTER TEMİZLEME (PDF İÇİN) ---
 # --- 2. EVRENSEL KARAKTER TEMİZLEME (PDF İÇİN) ---
 def tr_to_en(text):
     text = str(text)
-    # Türkçe İ ve ı harfleri unicodedata ile sorun çıkarabilir, manuel düzeltiyoruz:
     text = text.replace('ı', 'i').replace('İ', 'I')
-    
-    # Kalan tüm dillerdeki (Çekçe, Almanca vb.) aksanlı harfleri evrensel olarak temizler:
     text = ''.join(c for c in unicodedata.normalize('NFKD', text) if unicodedata.category(c) != 'Mn')
-    
     return text
 
 # --- 3. TEK PARÇA TÜM SEYAHATİ PDF YAPMA FONKSİYONU ---
@@ -131,7 +123,7 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
         fontSize=24,
         textColor=colors.HexColor("#1f4e78"),
         spaceAfter=10,
-        alignment=1 # Ortala
+        alignment=1
     )
     subtitle_style = ParagraphStyle(
         'BookletSub',
@@ -150,7 +142,6 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
         spaceBefore=10
     )
     
-    # Kapak / Başlık Bilgisi
     story.append(Paragraph(tr_to_en("KURESEL SEYAHAT KITAPCIGI"), title_style))
     story.append(Paragraph(tr_to_en("Global Rota Planlayici V2 ile Otonom Olarak Olusturulmustur"), subtitle_style))
     story.append(Spacer(1, 15))
@@ -186,7 +177,10 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
             zaman_str = f"{varis_saati} - {cikis_saati}"
             durak_str = tr_to_en(f"{idx+1}. {row['name']}")
             kat_str = tr_to_en(str(row['kategori']))
-            sure_str = tr_to_en(f"Yol: {int(row['travel_time'])}dk | Sure: {row['ort_sure']}dk")
+            
+            # PDF tablosuna Yürüme veya Araç bilgisini dinamik olarak basıyoruz
+            mod_str = row.get('ulasim_modu', 'Gecis')
+            sure_str = tr_to_en(f"{mod_str}: {int(row['travel_time'])}dk | Sure: {row['ort_sure']}dk")
             
             table_data.append([zaman_str, durak_str, kat_str, sure_str])
             
@@ -215,7 +209,7 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
     return buffer.getvalue()
 
 
-# --- 4. CACHE VE YAPAY ZEKA MODÜLLERİ (YENİ MİMARİ) ---
+# --- 4. CACHE VE YAPAY ZEKA MODÜLLERİ ---
 def cache_den_getir(sehir_adi, gun_sayisi):
     if supabase is None: return None
     try:
@@ -279,7 +273,7 @@ def yapay_zekadan_sehir_rotasi_iste(sehir_adi, gun_sayisi, ana_istek):
         return None
 
 # --- 5. ARAYÜZ VE GİRDİLER ---
-st.set_page_config(page_title="Global Rota Planlayıcı V2 + Kitapçık PDF", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Global Rota Planlayıcı V2 + OSRM", layout="wide", initial_sidebar_state="expanded")
 
 with st.sidebar:
     st.header("🌍 Büyük Avrupa Turu")
@@ -303,15 +297,15 @@ with st.sidebar:
     generate_btn = st.button("Devasa Planı ve Kitapçığı Oluştur 🚀", use_container_width=True)
 
 # --- 6. ANA UYGULAMA MANTIĞI VE SEKMELER ---
-st.title("🗺️ Global Rota Planlayıcı V2 (Akıllı Önbellek & PDF Kitapçık)")
-st.caption("Yapay zeka planınızı şehir şehir ayrıştırır, varsa veritabanından saniyesinde çeker, yoksa sıfırdan oluşturur.")
+st.title("🗺️ Global Rota Planlayıcı V2 (OSRM Gerçek Ulaşım Verisi)")
+st.caption("Yapay zeka planınızı önbellekten alır, OSRM algoritması ile sokak bazlı yürüme/araç sürelerini hesaplar.")
 
 if generate_btn:
     if not user_ai_prompt:
         st.error("Lütfen hayalinizdeki seyahat planını yazın!")
     else:
         multi_day_plan = []
-        genel_gun_sayaci = 1 # Sekmelerin ve günlerin sırayla gitmesi için sayaç
+        genel_gun_sayaci = 1 
         
         with st.spinner("🧠 Yapay zeka niyetinizi ayrıştırıyor..."):
             istek_listesi = kullanici_niyetini_analiz_et(user_ai_prompt)
@@ -337,7 +331,6 @@ if generate_btn:
                             st.success(f"🧠 {sehir} rotası yapay zeka tarafından özel olarak çizildi!")
                             cache_e_kaydet(sehir, gun, sehir_plani, ozel)
                     
-                    # Gün numaralarını ana plana göre ardışık olacak şekilde düzenle
                     if sehir_plani:
                         for gun_verisi in sehir_plani:
                             gun_verisi["gun"] = genel_gun_sayaci
@@ -349,7 +342,6 @@ if generate_btn:
             else:
                 st.balloons()
                 
-                # --- ANA SAYFADA TÜM TURU TEK PDF OLARAK İNDİRME BUTONU ---
                 full_pdf_bytes = generate_full_travel_booklet(multi_day_plan, start_time, end_time)
                 st.success("🎉 Devasa seyahat planınız başarıyla oluşturuldu! Aşağıdaki butondan tüm turu tek bir PDF Kitapçık olarak indirebilirsiniz:")
                 st.download_button(
@@ -380,6 +372,7 @@ if generate_btn:
                         end_dt = pd.Timestamp(f"2000-01-01 {end_time}")
                         total_available_minutes = int((end_dt - start_dt).total_seconds() / 60)
                         
+                        # OSRM ile rotayı optimize et
                         gunluk_rota = optimize_route(df_day, baslangic_lat, baslangic_lon, total_available_minutes)
                         
                         if gunluk_rota.empty:
@@ -416,7 +409,10 @@ if generate_btn:
                                     current_time += timedelta(minutes=int(row['ort_sure']))
                                     cikis_saati = current_time.strftime('%H:%M')
                                     
+                                    # Ekrana yürüme mi araç mı bilgisini basıyoruz
+                                    ulasim_sekli = row.get('ulasim_modu', 'Geçiş')
+                                    
                                     st.warning(
                                         f"**{varis_saati} - {cikis_saati}** | 📍 {idx+1}. {row['name']}\n\n"
-                                        f"*Kategori: {row['kategori']} | Geçiş: {int(row['travel_time'])} dk*"
+                                        f"*Kategori: {row['kategori']} | {ulasim_sekli}: {int(row['travel_time'])} dk*"
                                     )
