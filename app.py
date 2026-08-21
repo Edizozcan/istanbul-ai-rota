@@ -7,6 +7,43 @@ import google.generativeai as genai
 import folium
 from streamlit_folium import folium_static 
 import io
+import streamlit as st
+from supabase import create_client, Client
+
+# --- 1. SUPABASE BAĞLANTISI ---
+@st.cache_resource
+def init_supabase():
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
+
+supabase = init_supabase()
+
+# --- 2. AKILLI ÖNBELLEK (CACHE) FONKSİYONLARI ---
+def cache_den_getir(sehir_adi, gun_sayisi):
+    """Veritabanında daha önce oluşturulmuş bir rota varsa saniyesinde çeker."""
+    try:
+        response = supabase.table("sehir_rotalari_cache").select("rota_jsonb").eq("sehir_adi", sehir_adi).eq("gun_sayisi", gun_sayisi).execute()
+        if len(response.data) > 0:
+            return response.data[0]["rota_jsonb"]
+        return None
+    except Exception as e:
+        print("Cache okuma hatası:", e)
+        return None
+
+def cache_e_kaydet(sehir_adi, gun_sayisi, rota_jsonb, ozel_istek_mi=False):
+    """Yeni üretilen rotayı, içinde özel bir istek yoksa gelecekte kullanmak üzere kaydeder."""
+    if not ozel_istek_mi:
+        try:
+            data = {
+                "sehir_adi": sehir_adi,
+                "gun_sayisi": gun_sayisi,
+                "rota_jsonb": rota_jsonb,
+                "ozel_istek_mi": ozel_istek_mi
+            }
+            supabase.table("sehir_rotalari_cache").insert(data).execute()
+        except Exception as e:
+            print("Cache yazma hatası:", e)
 
 # ReportLab kütüphaneleri
 from reportlab.lib.pagesizes import letter
