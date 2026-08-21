@@ -5,4 +5,4 @@ google-generativeai
 folium
 streamlit-folium
 reportlab
-supabase==2.3.0
+supabase
