@@ -4,5 +4,6 @@ folium
 streamlit-folium
 reportlab
 supabase
-google-generativeai==0.5.4
+google-generativeai
 requests
+protobuf<4.21.0
