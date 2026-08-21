@@ -228,23 +228,34 @@ def cache_e_kaydet(sehir_adi, gun_sayisi, rota_jsonb, ozel_istek_mi):
         supabase.table("sehir_rotalari_cache").insert(data).execute()
     except Exception:
         pass
-
 def kullanici_niyetini_analiz_et(kullanici_girdisi):
-    model = genai.GenerativeModel('gemini-3.6-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash')
     prompt = f"""
     Sen bir veri ayrıştırıcısısın. İsteği analiz et: "{kullanici_girdisi}"
     Bana SADECE şu formatta JSON dön:
     [
         {{"sehir_adi": "Prag", "gun_sayisi": 3, "ozel_istek_mi": false}},
-        {{"sehir_adi": "Viyana", "gun_sayisi": 2, "ozel_istek_mi": true}}
+        {{"sehir_adi": "Budapeste", "gun_sayisi": 3, "ozel_istek_mi": false}}
     ]
-    Kurallar: Özel istek/mekan/şart varsa 'ozel_istek_mi': true, yoksa false. Asla markdown kullanma.
+    Kurallar: Özel istek/mekan/şart varsa 'ozel_istek_mi': true, yoksa false.
     """
     try:
         response = model.generate_content(prompt)
-        raw_text = response.text.replace("```json", "").replace("```", "").strip()
-        return json.loads(raw_text)
-    except Exception:
+        raw_text = response.text
+        
+        baslangic = raw_text.find('[')
+        bitis = raw_text.rfind(']')
+        
+        if baslangic != -1 and bitis != -1:
+            temiz_json = raw_text[baslangic:bitis+1]
+            return json.loads(temiz_json)
+        else:
+            # Hata 1: Format bozuksa ekrana bas
+            st.error(f"🔍 API'den gelen hatalı format: {raw_text}")
+            return []
+    except Exception as e:
+        # Hata 2: Kota dolduysa veya API çöktüyse ekrana bas
+        st.error(f"🚨 API Kritik Hatası: {e}")
         return []
 
 def yapay_zekadan_sehir_rotasi_iste(sehir_adi, gun_sayisi, ana_istek):
