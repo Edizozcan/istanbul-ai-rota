@@ -11,20 +11,15 @@ import io
 import unicodedata
 import requests
 
-# ReportLab kütüphaneleri
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
-
-# Supabase kütüphanesi
 from supabase import create_client, Client
 
-# --- GÜVENLİ API AYARLARI ---
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 genai.configure(api_key=GEMINI_API_KEY)
 
-# --- SUPABASE BAĞLANTISI ---
 @st.cache_resource
 def init_supabase() -> Client:
     try:
@@ -37,7 +32,6 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
-# --- 1. MATEMATİKSEL, OSRM VE OPTİMİZASYON FONKSİYONLARI ---
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371.0
     lat1_rad, lon1_rad = math.radians(lat1), math.radians(lon1)
@@ -59,8 +53,8 @@ def get_osrm_travel_data(lat1, lon1, lat2, lon2, mode="walking"):
                 distance_km = data["routes"][0]["distance"] / 1000.0
                 return int(duration_min), distance_km
     except Exception as e:
-        print("OSRM API Hatası (Haversine'e dönülüyor):", e)
-        
+        pass
+    
     dist_km = haversine(lat1, lon1, lat2, lon2)
     speed = 4.0 if mode == "walking" else 25.0
     return int((dist_km / speed) * 60), dist_km
@@ -99,44 +93,21 @@ def optimize_route(df, start_lat, start_lon, total_minutes):
             
     return pd.DataFrame(route)
 
-# --- 2. EVRENSEL KARAKTER TEMİZLEME (PDF İÇİN) ---
 def tr_to_en(text):
     text = str(text)
     text = text.replace('ı', 'i').replace('İ', 'I')
     text = ''.join(c for c in unicodedata.normalize('NFKD', text) if unicodedata.category(c) != 'Mn')
     return text
 
-# --- 3. TEK PARÇA TÜM SEYAHATİ PDF YAPMA FONKSİYONU ---
 def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_input):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
     story = []
     
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle(
-        'BookletTitle',
-        parent=styles['Heading1'],
-        fontSize=24,
-        textColor=colors.HexColor("#1f4e78"),
-        spaceAfter=10,
-        alignment=1
-    )
-    subtitle_style = ParagraphStyle(
-        'BookletSub',
-        parent=styles['Normal'],
-        fontSize=12,
-        textColor=colors.HexColor("#595959"),
-        spaceAfter=25,
-        alignment=1
-    )
-    day_heading = ParagraphStyle(
-        'DayHeading',
-        parent=styles['Heading2'],
-        fontSize=16,
-        textColor=colors.HexColor("#2f5597"),
-        spaceAfter=10,
-        spaceBefore=10
-    )
+    title_style = ParagraphStyle('BookletTitle', parent=styles['Heading1'], fontSize=24, textColor=colors.HexColor("#1f4e78"), spaceAfter=10, alignment=1)
+    subtitle_style = ParagraphStyle('BookletSub', parent=styles['Normal'], fontSize=12, textColor=colors.HexColor("#595959"), spaceAfter=25, alignment=1)
+    day_heading = ParagraphStyle('DayHeading', parent=styles['Heading2'], fontSize=16, textColor=colors.HexColor("#2f5597"), spaceAfter=10, spaceBefore=10)
     
     story.append(Paragraph(tr_to_en("KURESEL SEYAHAT KITAPCIGI"), title_style))
     story.append(Paragraph(tr_to_en("Global Rota Planlayici V2 ile Otonom Olarak Olusturulmustur"), subtitle_style))
@@ -151,8 +122,7 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
         sehir_adi = day_data['sehir']
         df_day = pd.DataFrame(day_data['mekanlar'])
         
-        if df_day.empty:
-            continue
+        if df_day.empty: continue
             
         baslangic_lat = df_day.iloc[0]['lat']
         baslangic_lon = df_day.iloc[0]['lon']
@@ -160,7 +130,6 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
         gunluk_rota = optimize_route(df_day, baslangic_lat, baslangic_lon, total_available_minutes)
         
         story.append(Paragraph(tr_to_en(f"Gun {gun_no} - Sehir: {sehir_adi}"), day_heading))
-        
         table_data = [[tr_to_en("Saat Araligi"), tr_to_en("Durak Adi"), tr_to_en("Kategori"), tr_to_en("Gecis / Ziyaret")]]
         
         current_time = start_dt_base
@@ -173,7 +142,6 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
             zaman_str = f"{varis_saati} - {cikis_saati}"
             durak_str = tr_to_en(f"{idx+1}. {row['name']}")
             kat_str = tr_to_en(str(row['kategori']))
-            
             mod_str = row.get('ulasim_modu', 'Gecis')
             sure_str = tr_to_en(f"{mod_str}: {int(row['travel_time'])}dk | Sure: {row['ort_sure']}dk")
             
@@ -195,37 +163,29 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
         
         story.append(t)
         story.append(Spacer(1, 15))
-        
-        if i < len(multi_day_plan) - 1:
-            story.append(PageBreak())
+        if i < len(multi_day_plan) - 1: story.append(PageBreak())
             
     doc.build(story)
     buffer.seek(0)
     return buffer.getvalue()
 
-
-# --- 4. CACHE VE YAPAY ZEKA MODÜLLERİ ---
 def cache_den_getir(sehir_adi, gun_sayisi):
     if supabase is None: return None
     try:
-        response = supabase.table("sehir_rotalari_cache") \
-            .select("rota_jsonb").eq("sehir_adi", sehir_adi).eq("gun_sayisi", gun_sayisi).execute()
-        if len(response.data) > 0:
-            return response.data[0]["rota_jsonb"]
+        response = supabase.table("sehir_rotalari_cache").select("rota_jsonb").eq("sehir_adi", sehir_adi).eq("gun_sayisi", gun_sayisi).execute()
+        if len(response.data) > 0: return response.data[0]["rota_jsonb"]
         return None
-    except Exception:
-        return None
+    except Exception: return None
 
 def cache_e_kaydet(sehir_adi, gun_sayisi, rota_jsonb, ozel_istek_mi):
     if supabase is None or ozel_istek_mi: return
     try:
         data = {"sehir_adi": sehir_adi, "gun_sayisi": gun_sayisi, "rota_jsonb": rota_jsonb, "ozel_istek_mi": ozel_istek_mi}
         supabase.table("sehir_rotalari_cache").insert(data).execute()
-    except Exception:
-        pass
+    except Exception: pass
 
 def kullanici_niyetini_analiz_et(kullanici_girdisi):
-    model = genai.GenerativeModel('gemini-pro')
+    model = genai.GenerativeModel('gemini-1.5-flash')
     prompt = f"""
     Sen bir veri ayrıştırıcısısın. İsteği analiz et: "{kullanici_girdisi}"
     Bana SADECE şu formatta JSON dön:
@@ -233,18 +193,15 @@ def kullanici_niyetini_analiz_et(kullanici_girdisi):
         {{"sehir_adi": "Prag", "gun_sayisi": 3, "ozel_istek_mi": false}},
         {{"sehir_adi": "Budapeste", "gun_sayisi": 3, "ozel_istek_mi": false}}
     ]
-    Kurallar: Özel istek/mekan/şart varsa 'ozel_istek_mi': true, yoksa false. Asla markdown kullanma.
+    Kurallar: Özel istek/mekan/şart varsa 'ozel_istek_mi': true, yoksa false.
     """
     try:
         response = model.generate_content(prompt)
         raw_text = response.text
-        
         baslangic = raw_text.find('[')
         bitis = raw_text.rfind(']')
-        
         if baslangic != -1 and bitis != -1:
-            temiz_json = raw_text[baslangic:bitis+1]
-            return json.loads(temiz_json)
+            return json.loads(raw_text[baslangic:bitis+1])
         else:
             st.error(f"🔍 API'den gelen hatalı format: {raw_text}")
             return []
@@ -253,7 +210,7 @@ def kullanici_niyetini_analiz_et(kullanici_girdisi):
         return []
 
 def yapay_zekadan_sehir_rotasi_iste(sehir_adi, gun_sayisi, ana_istek):
-    model = genai.GenerativeModel('gemini-pro')
+    model = genai.GenerativeModel('gemini-1.5-flash')
     prompt = f"""
     Kullanıcının ana isteği: {ana_istek}
     Görev: SADECE {sehir_adi} şehri için {gun_sayisi} günlük rota oluştur. Her gün 5-6 mekan olsun.
@@ -273,43 +230,26 @@ def yapay_zekadan_sehir_rotasi_iste(sehir_adi, gun_sayisi, ana_istek):
     try:
         response = model.generate_content(prompt)
         raw_text = response.text
-        
         baslangic = raw_text.find('[')
         bitis = raw_text.rfind(']')
-        
         if baslangic != -1 and bitis != -1:
-            temiz_json = raw_text[baslangic:bitis+1]
-            return json.loads(temiz_json)
-        else:
-            return None
+            return json.loads(raw_text[baslangic:bitis+1])
+        return None
     except Exception as e:
         return None
 
-# --- 5. ARAYÜZ VE GİRDİLER ---
 st.set_page_config(page_title="Global Rota Planlayıcı V2 + OSRM", layout="wide", initial_sidebar_state="expanded")
 
 with st.sidebar:
     st.header("🌍 Büyük Avrupa Turu")
-    
-    st.subheader("Günlük Zaman Planı")
     col1, col2 = st.columns(2)
-    with col1:
-        start_time = st.time_input("Mesai Başlangıcı", time(9, 0))
-    with col2:
-        end_time = st.time_input("Mesai Bitişi", time(20, 0))
-        
+    with col1: start_time = st.time_input("Mesai Başlangıcı", time(9, 0))
+    with col2: end_time = st.time_input("Mesai Bitişi", time(20, 0))
     st.markdown("---")
-    st.subheader("🤖 Yapay Zeka Asistanı")
-    user_ai_prompt = st.text_area(
-        "Tüm seyahat planını detaylıca yaz:", 
-        placeholder="Örn: 3 gün Prag, 2 gün Viyana. Bol bol tarihi yer görelim.",
-        height=130
-    )
-    
+    user_ai_prompt = st.text_area("Tüm seyahat planını detaylıca yaz:", placeholder="Örn: 3 gün Prag...", height=130)
     st.markdown("---")
     generate_btn = st.button("Devasa Planı ve Kitapçığı Oluştur 🚀", use_container_width=True)
 
-# --- 6. ANA UYGULAMA MANTIĞI VE SEKMELER ---
 st.title("🗺️ Global Rota Planlayıcı V2 (OSRM Gerçek Ulaşım Verisi)")
 st.caption("Yapay zeka planınızı önbellekten alır, OSRM algoritması ile sokak bazlı yürüme/araç sürelerini hesaplar.")
 
@@ -323,9 +263,7 @@ if generate_btn:
         with st.spinner("🧠 Yapay zeka niyetinizi ayrıştırıyor..."):
             istek_listesi = kullanici_niyetini_analiz_et(user_ai_prompt)
             
-        if not istek_listesi:
-            st.error("Girdiğiniz metin analiz edilemedi. Lütfen daha net yazın.")
-        else:
+        if istek_listesi:
             for islem in istek_listesi:
                 sehir = islem["sehir_adi"]
                 gun = islem["gun_sayisi"]
@@ -335,8 +273,7 @@ if generate_btn:
                     sehir_plani = None
                     if not ozel:
                         sehir_plani = cache_den_getir(sehir, gun)
-                        if sehir_plani:
-                            st.success(f"⚡ {sehir} rotası Supabase önbelleğinden çekildi!")
+                        if sehir_plani: st.success(f"⚡ {sehir} rotası Supabase önbelleğinden çekildi!")
                     
                     if not sehir_plani:
                         sehir_plani = yapay_zekadan_sehir_rotasi_iste(sehir, gun, user_ai_prompt)
@@ -350,80 +287,47 @@ if generate_btn:
                             multi_day_plan.append(gun_verisi)
                             genel_gun_sayaci += 1
 
-            if not multi_day_plan:
-                st.warning("Hiçbir şehir için rota oluşturulamadı. Lütfen tekrar deneyin.")
-            else:
+            if multi_day_plan:
                 st.balloons()
-                
                 full_pdf_bytes = generate_full_travel_booklet(multi_day_plan, start_time, end_time)
-                st.success("🎉 Devasa seyahat planınız başarıyla oluşturuldu! Aşağıdaki butondan tüm turu tek bir PDF Kitapçık olarak indirebilirsiniz:")
-                st.download_button(
-                    label="📥 TÜM SEYAHATİ PDF KİTAPÇIK OLARAK İNDİR (TÜM GÜNLER)",
-                    data=full_pdf_bytes,
-                    file_name="Avrupa_Turu_Seyahat_Kitapcigi.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
+                st.success("🎉 Devasa seyahat planınız başarıyla oluşturuldu!")
+                st.download_button("📥 TÜM SEYAHATİ PDF KİTAPÇIK OLARAK İNDİR", data=full_pdf_bytes, file_name="Avrupa_Turu_Seyahat.pdf", mime="application/pdf", use_container_width=True)
                 st.markdown("---")
                 
-                tab_titles = [f"📅 Gün {day['gun']} ({day['sehir']})" for day in multi_day_plan]
-                tabs = st.tabs(tab_titles)
-                
+                tabs = st.tabs([f"📅 Gün {day['gun']} ({day['sehir']})" for day in multi_day_plan])
                 for i, tab in enumerate(tabs):
                     with tab:
                         day_data = multi_day_plan[i]
                         city_name = day_data['sehir']
                         df_day = pd.DataFrame(day_data['mekanlar'])
+                        if df_day.empty: continue
                         
-                        if df_day.empty:
-                            continue
-                            
                         baslangic_lat = df_day.iloc[0]['lat']
                         baslangic_lon = df_day.iloc[0]['lon']
-                        
-                        start_dt = pd.Timestamp(f"2000-01-01 {start_time}")
-                        end_dt = pd.Timestamp(f"2000-01-01 {end_time}")
-                        total_available_minutes = int((end_dt - start_dt).total_seconds() / 60)
+                        total_available_minutes = int((pd.Timestamp(f"2000-01-01 {end_time}") - pd.Timestamp(f"2000-01-01 {start_time}")).total_seconds() / 60)
                         
                         gunluk_rota = optimize_route(df_day, baslangic_lat, baslangic_lon, total_available_minutes)
-                        
                         if gunluk_rota.empty:
                             st.warning("Zaman yetersiz!")
                         else:
                             map_col, timeline_col = st.columns([3, 2])
-                            
                             with map_col:
-                                map_center = [gunluk_rota['lat'].mean(), gunluk_rota['lon'].mean()]
-                                m = folium.Map(location=map_center, zoom_start=13)
+                                m = folium.Map(location=[gunluk_rota['lat'].mean(), gunluk_rota['lon'].mean()], zoom_start=13)
                                 route_coords = []
-                                
                                 for idx, row in gunluk_rota.iterrows():
                                     coord = [row['lat'], row['lon']]
                                     route_coords.append(coord)
-                                    folium.Marker(
-                                        location=coord,
-                                        tooltip=f"{idx+1}. {row['name']}",
-                                        popup=folium.Popup(f"<b>{idx+1}. Durak:</b> {row['name']}<br><i>{row['kategori']}</i>", max_width=250),
-                                        icon=folium.Icon(color="darkblue", icon="info-sign")
-                                    ).add_to(m)
-                                    
+                                    folium.Marker(location=coord, tooltip=f"{idx+1}. {row['name']}", popup=folium.Popup(f"<b>{idx+1}. Durak:</b> {row['name']}<br><i>{row['kategori']}</i>", max_width=250), icon=folium.Icon(color="darkblue", icon="info-sign")).add_to(m)
                                 folium.PolyLine(locations=route_coords, color="red", weight=4, opacity=0.7, dash_array='10').add_to(m)
                                 folium_static(m, width=550, height=450)
-                                
                             with timeline_col:
                                 st.subheader(f"📍 {city_name} Çizelgesi")
-                                current_time = start_dt
+                                current_time = pd.Timestamp(f"2000-01-01 {start_time}")
                                 st.info(f"**{current_time.strftime('%H:%M')}** | 🚶‍♂️ Güne Başlangıç")
-                                
                                 for idx, row in gunluk_rota.iterrows():
                                     current_time += timedelta(minutes=int(row['travel_time']))
                                     varis_saati = current_time.strftime('%H:%M')
                                     current_time += timedelta(minutes=int(row['ort_sure']))
                                     cikis_saati = current_time.strftime('%H:%M')
-                                    
                                     ulasim_sekli = row.get('ulasim_modu', 'Geçiş')
-                                    
-                                    st.warning(
-                                        f"**{varis_saati} - {cikis_saati}** | 📍 {idx+1}. {row['name']}\n\n"
-                                        f"*Kategori: {row['kategori']} | {ulasim_sekli}: {int(row['travel_time'])} dk*"
-                                    )
+                                    st.warning(f"**{varis_saati} - {cikis_saati}** | 📍 {idx+1}. {row['name']}\n\n*Kategori: {row['kategori']} | {ulasim_sekli}: {int(row['travel_time'])} dk*")
