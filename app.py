@@ -20,6 +20,23 @@ from supabase import create_client, Client
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 genai.configure(api_key=GEMINI_API_KEY)
 
+# --- OTOMATİK MODEL SEÇİCİ (404 HATASINI ÖNLER) ---
+@st.cache_resource
+def get_working_model_name():
+    try:
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        preferred_models = ["models/gemini-1.5-flash", "models/gemini-1.0-pro", "models/gemini-pro"]
+        for pref in preferred_models:
+            if pref in available_models:
+                return pref.replace("models/", "")
+        if available_models:
+            return available_models[0].replace("models/", "")
+        return "gemini-1.5-flash"
+    except Exception:
+        return "gemini-1.5-flash"
+
+ACTIVE_MODEL = get_working_model_name()
+
 @st.cache_resource
 def init_supabase() -> Client:
     try:
@@ -52,7 +69,7 @@ def get_osrm_travel_data(lat1, lon1, lat2, lon2, mode="walking"):
                 duration_min = data["routes"][0]["duration"] / 60.0
                 distance_km = data["routes"][0]["distance"] / 1000.0
                 return int(duration_min), distance_km
-    except Exception as e:
+    except Exception:
         pass
     
     dist_km = haversine(lat1, lon1, lat2, lon2)
@@ -185,7 +202,7 @@ def cache_e_kaydet(sehir_adi, gun_sayisi, rota_jsonb, ozel_istek_mi):
     except Exception: pass
 
 def kullanici_niyetini_analiz_et(kullanici_girdisi):
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel(ACTIVE_MODEL)
     prompt = f"""
     Sen bir veri ayrıştırıcısısın. İsteği analiz et: "{kullanici_girdisi}"
     Bana SADECE şu formatta JSON dön:
@@ -210,7 +227,7 @@ def kullanici_niyetini_analiz_et(kullanici_girdisi):
         return []
 
 def yapay_zekadan_sehir_rotasi_iste(sehir_adi, gun_sayisi, ana_istek):
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel(ACTIVE_MODEL)
     prompt = f"""
     Kullanıcının ana isteği: {ana_istek}
     Görev: SADECE {sehir_adi} şehri için {gun_sayisi} günlük rota oluştur. Her gün 5-6 mekan olsun.
@@ -235,7 +252,7 @@ def yapay_zekadan_sehir_rotasi_iste(sehir_adi, gun_sayisi, ana_istek):
         if baslangic != -1 and bitis != -1:
             return json.loads(raw_text[baslangic:bitis+1])
         return None
-    except Exception as e:
+    except Exception:
         return None
 
 st.set_page_config(page_title="Global Rota Planlayıcı V2 + OSRM", layout="wide", initial_sidebar_state="expanded")
@@ -249,6 +266,7 @@ with st.sidebar:
     user_ai_prompt = st.text_area("Tüm seyahat planını detaylıca yaz:", placeholder="Örn: 3 gün Prag...", height=130)
     st.markdown("---")
     generate_btn = st.button("Devasa Planı ve Kitapçığı Oluştur 🚀", use_container_width=True)
+    st.caption(f"🧠 Aktif Model: `{ACTIVE_MODEL}`")
 
 st.title("🗺️ Global Rota Planlayıcı V2 (OSRM Gerçek Ulaşım Verisi)")
 st.caption("Yapay zeka planınızı önbellekten alır, OSRM algoritması ile sokak bazlı yürüme/araç sürelerini hesaplar.")
