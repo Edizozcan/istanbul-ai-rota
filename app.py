@@ -229,7 +229,7 @@ def cache_e_kaydet(sehir_adi, gun_sayisi, rota_jsonb, ozel_istek_mi):
     except Exception:
         pass
 def kullanici_niyetini_analiz_et(kullanici_girdisi):
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = model = genai.GenerativeModel('gemini-pro')
     prompt = f"""
     Sen bir veri ayrıştırıcısısın. İsteği analiz et: "{kullanici_girdisi}"
     Bana SADECE şu formatta JSON dön:
@@ -259,7 +259,7 @@ def kullanici_niyetini_analiz_et(kullanici_girdisi):
         return []
 
 def yapay_zekadan_sehir_rotasi_iste(sehir_adi, gun_sayisi, ana_istek):
-    model = genai.GenerativeModel('gemini-3.6-flash')
+   model = genai.GenerativeModel('gemini-pro')
     prompt = f"""
     Kullanıcının ana isteği: {ana_istek}
     Görev: SADECE {sehir_adi} şehri için {gun_sayisi} günlük rota oluştur. Her gün 5-6 mekan olsun.
