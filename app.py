@@ -230,35 +230,21 @@ def cache_e_kaydet(sehir_adi, gun_sayisi, rota_jsonb, ozel_istek_mi):
         pass
 
 def kullanici_niyetini_analiz_et(kullanici_girdisi):
-    model = genai.GenerativeModel('gemini-1.5-flash') # Kararlı ve hızlı model sürümü
+    model = genai.GenerativeModel('gemini-3.6-flash')
     prompt = f"""
-    Sen bir veri ayrıştırıcısısın. Kullanıcının şu seyahat isteğini analiz et: "{kullanici_girdisi}"
-    
-    Bana SADECE geçerli bir JSON listesi dön, markdown (```json ... ```) veya başka hiçbir açıklama yazma.
-    Örnek Format:
+    Sen bir veri ayrıştırıcısısın. İsteği analiz et: "{kullanici_girdisi}"
+    Bana SADECE şu formatta JSON dön:
     [
         {{"sehir_adi": "Prag", "gun_sayisi": 3, "ozel_istek_mi": false}},
-        {{"sehir_adi": "Budapeste", "gun_sayisi": 3, "ozel_istek_mi": false}}
+        {{"sehir_adi": "Viyana", "gun_sayisi": 2, "ozel_istek_mi": true}}
     ]
-    
-    KURALLAR:
-    1. Kullanıcı özel bir mekan, maç veya aktivite belirttiyse 'ozel_istek_mi': true yap.
-    2. Sadece gün ve şehir belirttiyse 'ozel_istek_mi': false yap.
+    Kurallar: Özel istek/mekan/şart varsa 'ozel_istek_mi': true, yoksa false. Asla markdown kullanma.
     """
     try:
         response = model.generate_content(prompt)
-        raw_text = response.text.strip()
-        
-        # Olası markdown etiketlerini ve boşlukları temizle
-        if raw_text.startswith("```"):
-            raw_text = raw_text.split("```")[1]
-            if raw_text.startswith("json"):
-                raw_text = raw_text[4:]
-        raw_text = raw_text.strip()
-        
+        raw_text = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(raw_text)
-    except Exception as e:
-        print("Niyet analizi hata detayı:", e)
+    except Exception:
         return []
 
 def yapay_zekadan_sehir_rotasi_iste(sehir_adi, gun_sayisi, ana_istek):
