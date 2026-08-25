@@ -80,7 +80,7 @@ def optimize_route(df, start_lat, start_lon, total_minutes):
             
     return pd.DataFrame(route)
 
-# --- 1.5 ULAŞIM VE BÜTÇE HESAPLAMA MOTORU (FLIXBUS + OSRM) ---
+# --- 1.5 ULAŞIM VE BÜTÇE HESAPLAMA MOTORU ---
 def koordinat_bul(sehir_adi):
     url = f"https://nominatim.openstreetmap.org/search?q={sehir_adi}&format=json&limit=1"
     headers = {"User-Agent": "RotaPlanlayiciApp/1.0"}
@@ -155,12 +155,61 @@ def transit_maliyet_hesapla(kalkis_sehri, varis_sehri, tarih):
             
     return {"durum": "varsayilan", "kaynak": "Varsayılan", "fiyat": 45.00, "mesaj": f"Standart Bölge Geçişi"}
 
-# --- 2. EVRENSEL KARAKTER TEMİZLEME (PDF İÇİN) ---
+# --- 2. EVRENSEL KARAKTER TEMİZLEME VE ICS OLUŞTURUCU ---
 def tr_to_en(text):
     text = str(text)
     text = text.replace('ı', 'i').replace('İ', 'I').replace('ö', 'o').replace('Ö', 'O').replace('ü', 'u').replace('Ü', 'U').replace('ç', 'c').replace('Ç', 'C').replace('ş', 's').replace('Ş', 'S').replace('ğ', 'g').replace('Ğ', 'G')
     text = ''.join(c for c in unicodedata.normalize('NFKD', text) if unicodedata.category(c) != 'Mn')
     return text
+
+def generate_ics_calendar(multi_day_plan, start_date_input, start_time_input, end_time_input):
+    cal_lines = []
+    cal_lines.append("BEGIN:VCALENDAR")
+    cal_lines.append("VERSION:2.0")
+    cal_lines.append("PRODID:-//Global Rota Planlayici V2//TR")
+    
+    start_dt_base = pd.Timestamp(f"2000-01-01 {start_time_input}")
+    end_dt_base = pd.Timestamp(f"2000-01-01 {end_time_input}")
+    total_available_minutes = int((end_dt_base - start_dt_base).total_seconds() / 60)
+    
+    for day_data in multi_day_plan:
+        gun_no = day_data['gun']
+        sehir_adi = tr_to_en(day_data['sehir'])
+        df_day = pd.DataFrame(day_data['mekanlar'])
+        
+        if df_day.empty:
+            continue
+            
+        current_date = start_date_input + timedelta(days=gun_no - 1)
+        date_str = current_date.strftime("%Y%m%d")
+        
+        baslangic_lat = df_day.iloc[0]['lat']
+        baslangic_lon = df_day.iloc[0]['lon']
+        
+        gunluk_rota = optimize_route(df_day, baslangic_lat, baslangic_lon, total_available_minutes)
+        current_time = start_dt_base
+        
+        for idx, row in gunluk_rota.iterrows():
+            current_time += timedelta(minutes=int(row['travel_time']))
+            start_time_str = current_time.strftime('%H%M%S')
+            
+            current_time += timedelta(minutes=int(row['ort_sure']))
+            end_time_str = current_time.strftime('%H%M%S')
+            
+            mekan_maliyet = row.get('tahmini_maliyet_eur', 0)
+            durak_adi = tr_to_en(row['name'])
+            kat_adi = tr_to_en(row['kategori'])
+            
+            cal_lines.append("BEGIN:VEVENT")
+            cal_lines.append(f"SUMMARY:{durak_adi} ({sehir_adi})")
+            cal_lines.append(f"DTSTART:{date_str}T{start_time_str}")
+            cal_lines.append(f"DTEND:{date_str}T{end_time_str}")
+            cal_lines.append(f"DESCRIPTION:Kategori: {kat_adi}\\nTahmini Maliyet: {mekan_maliyet} EUR")
+            cal_lines.append(f"LOCATION:{durak_adi}, {sehir_adi}")
+            cal_lines.append("END:VEVENT")
+            
+    cal_lines.append("END:VCALENDAR")
+    return "\n".join(cal_lines)
 
 # --- 3. TEK PARÇA TÜM SEYAHATİ PDF YAPMA FONKSİYONU ---
 def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_input, genel_toplam_maliyet, seyahat_tarzi, seyahat_hizi):
@@ -171,16 +220,9 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle('BookletTitle', parent=styles['Heading1'], fontSize=26, textColor=colors.HexColor("#1e3a8a"), spaceAfter=10, alignment=1, fontName='Helvetica-Bold')
     subtitle_style = ParagraphStyle('BookletSub', parent=styles['Normal'], fontSize=12, textColor=colors.HexColor("#64748b"), spaceAfter=20, alignment=1)
-    
-    budget_style = ParagraphStyle(
-        'BudgetStyle', parent=styles['Heading2'], fontSize=14, textColor=colors.white, 
-        backColor=colors.HexColor("#10b981"), spaceAfter=30, alignment=1, 
-        borderPadding=(8, 15, 8, 15), borderRadius=5
-    )
-    
+    budget_style = ParagraphStyle('BudgetStyle', parent=styles['Heading2'], fontSize=14, textColor=colors.white, backColor=colors.HexColor("#10b981"), spaceAfter=30, alignment=1, borderPadding=(8, 15, 8, 15), borderRadius=5)
     day_heading = ParagraphStyle('DayHeading', parent=styles['Heading2'], fontSize=18, textColor=colors.HexColor("#1e40af"), spaceAfter=10, spaceBefore=20, fontName='Helvetica-Bold')
     maps_link_style = ParagraphStyle('MapsLink', parent=styles['Normal'], fontSize=10, textColor=colors.HexColor("#2563eb"), spaceAfter=15, fontName='Helvetica-Bold')
-    
     cell_style = ParagraphStyle('CellStyle', parent=styles['Normal'], fontSize=9, leading=12, textColor=colors.HexColor("#334155"))
     header_style = ParagraphStyle('HeaderStyle', parent=styles['Normal'], fontSize=10, leading=12, textColor=colors.white, fontName='Helvetica-Bold')
     
@@ -207,7 +249,6 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
         baslangic_lon = df_day.iloc[0]['lon']
         
         gunluk_rota = optimize_route(df_day, baslangic_lat, baslangic_lon, total_available_minutes)
-        
         coords = [f"{row['lat']},{row['lon']}" for _, row in gunluk_rota.iterrows()]
         gmaps_url = f"https://www.google.com/maps/dir/{'/'.join(coords)}"
         
@@ -238,17 +279,14 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
             cikis_saati = current_time.strftime('%H:%M')
             
             mekan_maliyet = row.get('tahmini_maliyet_eur', 0)
-            
             zaman_str = f"{varis_saati} - {cikis_saati}"
             durak_str = tr_to_en(f"{idx+1}. {row['name']}")
             kat_str = tr_to_en(f"{row['kategori']} | {mekan_maliyet} EUR")
             sure_str = tr_to_en(f"Yol: {int(row['travel_time'])}dk | Sure: {row['ort_sure']}dk")
             
             table_data.append([
-                Paragraph(zaman_str, cell_style), 
-                Paragraph(durak_str, cell_style), 
-                Paragraph(kat_str, cell_style), 
-                Paragraph(sure_str, cell_style)
+                Paragraph(zaman_str, cell_style), Paragraph(durak_str, cell_style), 
+                Paragraph(kat_str, cell_style), Paragraph(sure_str, cell_style)
             ])
             
         t = Table(table_data, colWidths=[80, 190, 110, 160])
@@ -267,7 +305,6 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
         
         story.append(t)
         story.append(Spacer(1, 20))
-        
         if i < len(multi_day_plan) - 1:
             story.append(PageBreak())
             
@@ -281,7 +318,6 @@ def cache_den_getir(sehir_adi, gun_sayisi, seyahat_tarzi, seyahat_hizi, sehir_bu
     if supabase is None: return None
     tarz_kisa = seyahat_tarzi.split(" ")[0]
     hiz_kisa = seyahat_hizi.split(" ")[0]
-    # İzolasyon genişletildi
     cache_key = f"{sehir_adi}_{tarz_kisa}_{hiz_kisa}_{sehir_butce_siniri}"
     try:
         response = supabase.table("sehir_rotalari_cache") \
@@ -324,7 +360,6 @@ def kullanici_niyetini_analiz_et(kullanici_girdisi):
 def yapay_zekadan_sehir_rotasi_iste(sehir_adi, gun_sayisi, ana_istek, seyahat_tarzi, seyahat_hizi, sehir_butce_siniri):
     model = genai.GenerativeModel('gemini-3.6-flash')
     
-    # BÜTÇE VE TARZ KURALI
     if "Ekonomik" in seyahat_tarzi:
         butce_kurali = "Bütçe: Çok Ucuz (0-15 EUR). Ücretsiz müzeler, parklar ve sokak lezzetleri öner."
     elif "Standart" in seyahat_tarzi:
@@ -332,7 +367,6 @@ def yapay_zekadan_sehir_rotasi_iste(sehir_adi, gun_sayisi, ana_istek, seyahat_ta
     else:
         butce_kurali = "Bütçe: Yüksek (50-150 EUR). Lüks restoranlar, VIP turlar öner."
 
-    # SEYAHAT HIZI (PACE) KURALI
     if "Hızlı" in seyahat_hizi:
         hiz_kurali = "Günde 7-9 mekan seç. 'ort_sure' değerlerini kısa (30-45 dk) tut. Hızlı ve yorucu bir keşif rotası olsun."
     elif "Yavaş" in seyahat_hizi:
@@ -340,19 +374,15 @@ def yapay_zekadan_sehir_rotasi_iste(sehir_adi, gun_sayisi, ana_istek, seyahat_ta
     else:
         hiz_kurali = "Günde 5-6 mekan seç. 'ort_sure' değerlerini dengeli (60-90 dk) tut."
 
-    # HARD-CAP BÜTÇE SINIRI KURALI
     hard_cap_kurali = ""
     if sehir_butce_siniri > 0:
-        hard_cap_kurali = f"\nKESİN KURAL: Bu {sehir_adi} şehri için oluşturduğun {gun_sayisi} günlük rotadaki tüm mekanların 'tahmini_maliyet_eur' TOPLAMI {sehir_butce_siniri} Euro'yu ASLA GEÇMEMELİDİR! Sınırı korumak için gerekirse ücretli yerleri silip tamamen ücretsiz (0 EUR) mekanlar ekle."
+        hard_cap_kurali = f"\nKESİN KURAL: Bu {sehir_adi} şehri için oluşturduğun {gun_sayisi} günlük rotadaki tüm mekanların 'tahmini_maliyet_eur' TOPLAMI {sehir_butce_siniri} Euro'yu ASLA GEÇMEMELİDİR! Sınırı korumak için ücretsiz (0 EUR) mekanlar ekle."
 
     prompt = f"""
     Kullanıcının ana isteği: {ana_istek}
     Görev: SADECE {sehir_adi} şehri için {gun_sayisi} günlük rota oluştur. 
-    
     YENİ GÖREV (HIZ): {hiz_kurali}
     YENİ GÖREV (TARZ): {butce_kurali} {hard_cap_kurali}
-    
-    Seçtiğin mekanların 'tahmini_maliyet_eur' değerlerini bu kurallara göre belirle. Koordinatları (lat, lon) gerçekçi ver.
     
     SADECE JSON FORMATINDA ÇIKTI VER:
     [
@@ -403,23 +433,9 @@ with st.sidebar:
     
     st.markdown("---")
     st.subheader("🎒 Seyahat Dinamikleri")
-    seyahat_tarzi = st.selectbox(
-        "Bütçe ve Konfor Beklentiniz",
-        ["Ekonomik (Sırt Çantalı / Öğrenci)", "Standart (Klasik Turist)", "Premium (Lüks & Konfor)"],
-        index=1
-    )
-    
-    seyahat_hizi = st.selectbox(
-        "Seyahat Hızı (Mekan Yoğunluğu)",
-        ["Yavaş (Günde 3-4 Mekan, Uzun Molalar)", "Normal (Günde 5-6 Mekan, Dengeli)", "Hızlı (Günde 7-9 Mekan, Keşif Odaklı)"],
-        index=1
-    )
-    
-    maksimum_butce = st.number_input(
-        "Toplam Maksimum Bütçe (EUR) - Opsiyonel", 
-        min_value=0, value=0, step=50, 
-        help="0 bırakırsanız yapay zeka sınır olmadan bütçe hesaplar. Değer girerseniz bütçenizi asla aşmaz."
-    )
+    seyahat_tarzi = st.selectbox("Bütçe ve Konfor Beklentiniz", ["Ekonomik (Sırt Çantalı / Öğrenci)", "Standart (Klasik Turist)", "Premium (Lüks & Konfor)"], index=1)
+    seyahat_hizi = st.selectbox("Seyahat Hızı (Mekan Yoğunluğu)", ["Yavaş (Günde 3-4 Mekan, Uzun Molalar)", "Normal (Günde 5-6 Mekan, Dengeli)", "Hızlı (Günde 7-9 Mekan, Keşif Odaklı)"], index=1)
+    maksimum_butce = st.number_input("Toplam Maksimum Bütçe (EUR) - Opsiyonel", min_value=0, value=0, step=50, help="0 bırakırsanız yapay zeka sınır olmadan bütçe hesaplar.")
     
     st.markdown("---")
     st.subheader("Günlük Zaman Planı")
@@ -431,17 +447,12 @@ with st.sidebar:
         
     st.markdown("---")
     st.subheader("🤖 Yapay Zeka Asistanı")
-    user_ai_prompt = st.text_area(
-        "Tüm seyahat planını detaylıca yaz:", 
-        placeholder="Örn: 2 gün Prag, 1 gün Viyana. Müzeler ağırlıklı olsun.",
-        height=130
-    )
+    user_ai_prompt = st.text_area("Tüm seyahat planını detaylıca yaz:", placeholder="Örn: 2 gün Prag, 1 gün Viyana. Müzeler ağırlıklı olsun.", height=130)
     
     st.markdown("---")
     generate_btn = st.button("Rotayı ve Bütçeyi Hesapla 🚀", use_container_width=True)
 
-
-# --- 6. ANA UYGULAMA MANTIĞI VE SEKMELER ---
+# --- 6. ANA UYGULAMA MANTIĞI ---
 st.title("🗺️ Global Rota Planlayıcı V2")
 st.caption("Seyahat tarzınıza, hızınıza ve bütçe sınırınıza göre mükemmel rotayı çizer.")
 
@@ -462,7 +473,6 @@ if generate_btn:
         if not istek_listesi:
             st.error("Girdiğiniz metin analiz edilemedi. Lütfen daha net yazın.")
         else:
-            # Toplam gün sayısını bul ve bütçeyi şehirlere dağıt
             toplam_gun = sum([islem["gun_sayisi"] for islem in istek_listesi])
             
             for islem in istek_listesi:
@@ -470,7 +480,6 @@ if generate_btn:
                 gun = islem["gun_sayisi"]
                 ozel = islem["ozel_istek_mi"]
                 
-                # Bütçeyi şehirlere gün ağırlıklı olarak dağıt
                 sehir_butcesi = 0
                 if maksimum_butce > 0 and toplam_gun > 0:
                     sehir_butcesi = int((maksimum_butce / toplam_gun) * gun)
@@ -506,34 +515,38 @@ if generate_btn:
                         if i > 0:
                             onceki_sehir = multi_day_plan[i-1]['sehir']
                             yeni_sehir = multi_day_plan[i]['sehir']
-                            
                             if onceki_sehir != yeni_sehir:
                                 gecis_tarihi_obj = start_date + timedelta(days=multi_day_plan[i]['gun'] - 1)
                                 gecis_tarihi_str = gecis_tarihi_obj.strftime("%d.%m.%Y")
-                                
                                 transit_sonuc = transit_maliyet_hesapla(onceki_sehir, yeni_sehir, gecis_tarihi_str)
                                 multi_day_plan[i]['transit'] = transit_sonuc
                                 gunluk_maliyet += transit_sonuc['fiyat']
                         
                         genel_toplam_maliyet += gunluk_maliyet
 
-                # Hafızaya al
+                # Tüm Üretilen Çıktıları Hafızaya Al
                 st.session_state.multi_day_plan = multi_day_plan
                 st.session_state.genel_toplam_maliyet = genel_toplam_maliyet
+                st.session_state.seyahat_tarzi = seyahat_tarzi
+                st.session_state.seyahat_hizi = seyahat_hizi
+                st.session_state.start_date = start_date
+                
+                # PDF Çıktısı
                 st.session_state.full_pdf_bytes = generate_full_travel_booklet(
                     multi_day_plan, start_time, end_time, round(genel_toplam_maliyet, 2), seyahat_tarzi, seyahat_hizi
                 )
-                st.session_state.seyahat_tarzi = seyahat_tarzi
-                st.session_state.seyahat_hizi = seyahat_hizi
+                
+                # ICS (Takvim) Çıktısı
+                ics_str = generate_ics_calendar(multi_day_plan, start_date, start_time, end_time)
+                st.session_state.ics_bytes = ics_str.encode('utf-8')
+                
                 st.session_state.plan_olusturuldu = True
                 st.rerun()
 
 if st.session_state.plan_olusturuldu:
     st.balloons()
-    
     st.markdown("---")
     
-    # Bütçe Sınırı Aşıldı Mı Kontrolü (Görsel Uyarı İçin)
     if maksimum_butce > 0 and st.session_state.genel_toplam_maliyet > maksimum_butce:
         st.warning(f"⚠️ **Dikkat:** Hedeflenen bütçeyi (Maks {maksimum_butce} EUR) aştınız. Şehirler arası ulaşım biletleri bütçe sınırına tabi değildir.")
         
@@ -541,13 +554,25 @@ if st.session_state.plan_olusturuldu:
     st.caption(f"*(Seçilen Profil: {st.session_state.seyahat_tarzi} | Hız: {st.session_state.seyahat_hizi})*")
     st.markdown("---")
     
-    st.download_button(
-        label="📥 BÜTÇELİ SEYAHAT KİTAPÇIĞINI PDF OLARAK İNDİR",
-        data=st.session_state.full_pdf_bytes,
-        file_name="Avrupa_Turu_Seyahat_Kitapcigi.pdf",
-        mime="application/pdf",
-        use_container_width=True
-    )
+    # İndirme Butonlarını Yan Yana Koyalım
+    col_dl1, col_dl2 = st.columns(2)
+    with col_dl1:
+        st.download_button(
+            label="📥 BÜTÇELİ SEYAHAT KİTAPÇIĞINI İNDİR (PDF)",
+            data=st.session_state.full_pdf_bytes,
+            file_name="Avrupa_Turu_Seyahat_Kitapcigi.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+    with col_dl2:
+        st.download_button(
+            label="📅 TÜM SEYAHATİ TAKVİME EKLE (.ICS)",
+            data=st.session_state.ics_bytes,
+            file_name="Avrupa_Turu_Takvimi.ics",
+            mime="text/calendar",
+            use_container_width=True
+        )
+        
     st.markdown("---")
     
     tab_titles = [f"📅 Gün {day['gun']} ({day['sehir']})" for day in st.session_state.multi_day_plan]
