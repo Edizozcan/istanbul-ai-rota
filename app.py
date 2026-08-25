@@ -11,7 +11,7 @@ import io
 import unicodedata
 import requests
 
-# ReportLab kütüphaneleri 
+# ReportLab kütüphaneleri
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -163,7 +163,7 @@ def tr_to_en(text):
     return text
 
 # --- 3. TEK PARÇA TÜM SEYAHATİ PDF YAPMA FONKSİYONU ---
-def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_input, genel_toplam_maliyet, seyahat_tarzi):
+def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_input, genel_toplam_maliyet, seyahat_tarzi, seyahat_hizi):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
     story = []
@@ -186,7 +186,8 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
     
     story.append(Paragraph(tr_to_en("KURESEL SEYAHAT KITAPCIGI"), title_style))
     tarz_ismi = seyahat_tarzi.split(" ")[0]
-    story.append(Paragraph(tr_to_en(f"Global Rota Planlayici V2 | Mod: {tarz_ismi}"), subtitle_style))
+    hiz_ismi = seyahat_hizi.split(" ")[0]
+    story.append(Paragraph(tr_to_en(f"Global Rota Planlayici V2 | Mod: {tarz_ismi} - Hiz: {hiz_ismi}"), subtitle_style))
     story.append(Paragraph(tr_to_en(f"Tahmini Toplam Tur Butcesi (Ulasim + Aktiviteler): {genel_toplam_maliyet} EUR"), budget_style))
     story.append(Spacer(1, 10))
     
@@ -207,7 +208,6 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
         
         gunluk_rota = optimize_route(df_day, baslangic_lat, baslangic_lon, total_available_minutes)
         
-        # Google Maps Rota Linki Oluşturma
         coords = [f"{row['lat']},{row['lon']}" for _, row in gunluk_rota.iterrows()]
         gmaps_url = f"https://www.google.com/maps/dir/{'/'.join(coords)}"
         
@@ -277,11 +277,12 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
 
 
 # --- 4. CACHE VE YAPAY ZEKA MODÜLLERİ ---
-def cache_den_getir(sehir_adi, gun_sayisi, seyahat_tarzi):
+def cache_den_getir(sehir_adi, gun_sayisi, seyahat_tarzi, seyahat_hizi, sehir_butce_siniri):
     if supabase is None: return None
-    # Veritabanında izolasyon sağlamak için anahtarı tarz ile birleştiriyoruz (Örn: Prag_Ekonomik)
-    tarz_kisa_ad = seyahat_tarzi.split(" ")[0]
-    cache_key = f"{sehir_adi}_{tarz_kisa_ad}"
+    tarz_kisa = seyahat_tarzi.split(" ")[0]
+    hiz_kisa = seyahat_hizi.split(" ")[0]
+    # İzolasyon genişletildi
+    cache_key = f"{sehir_adi}_{tarz_kisa}_{hiz_kisa}_{sehir_butce_siniri}"
     try:
         response = supabase.table("sehir_rotalari_cache") \
             .select("rota_jsonb").eq("sehir_adi", cache_key).eq("gun_sayisi", gun_sayisi).execute()
@@ -291,10 +292,11 @@ def cache_den_getir(sehir_adi, gun_sayisi, seyahat_tarzi):
     except Exception:
         return None
 
-def cache_e_kaydet(sehir_adi, gun_sayisi, rota_jsonb, ozel_istek_mi, seyahat_tarzi):
+def cache_e_kaydet(sehir_adi, gun_sayisi, rota_jsonb, ozel_istek_mi, seyahat_tarzi, seyahat_hizi, sehir_butce_siniri):
     if supabase is None or ozel_istek_mi: return
-    tarz_kisa_ad = seyahat_tarzi.split(" ")[0]
-    cache_key = f"{sehir_adi}_{tarz_kisa_ad}"
+    tarz_kisa = seyahat_tarzi.split(" ")[0]
+    hiz_kisa = seyahat_hizi.split(" ")[0]
+    cache_key = f"{sehir_adi}_{tarz_kisa}_{hiz_kisa}_{sehir_butce_siniri}"
     try:
         data = {"sehir_adi": cache_key, "gun_sayisi": gun_sayisi, "rota_jsonb": rota_jsonb, "ozel_istek_mi": ozel_istek_mi}
         supabase.table("sehir_rotalari_cache").insert(data).execute()
@@ -319,23 +321,38 @@ def kullanici_niyetini_analiz_et(kullanici_girdisi):
     except Exception:
         return []
 
-def yapay_zekadan_sehir_rotasi_iste(sehir_adi, gun_sayisi, ana_istek, seyahat_tarzi):
+def yapay_zekadan_sehir_rotasi_iste(sehir_adi, gun_sayisi, ana_istek, seyahat_tarzi, seyahat_hizi, sehir_butce_siniri):
     model = genai.GenerativeModel('gemini-3.6-flash')
     
-    # Seyahat tarzına göre Gemini'ye giden bütçe kurallarını belirliyoruz
+    # BÜTÇE VE TARZ KURALI
     if "Ekonomik" in seyahat_tarzi:
-        butce_kurali = "Bütçe: Çok Ucuz (0-15 EUR). Ücretsiz müzeler, halka açık parklar ve uygun fiyatlı sokak lezzetleri/fast food öner."
+        butce_kurali = "Bütçe: Çok Ucuz (0-15 EUR). Ücretsiz müzeler, parklar ve sokak lezzetleri öner."
     elif "Standart" in seyahat_tarzi:
-        butce_kurali = "Bütçe: Orta (15-40 EUR). Klasik turistik müzeler, popüler biletli lokasyonlar ve ortalama fiyatlı kafeler/restoranlar öner."
+        butce_kurali = "Bütçe: Orta (15-40 EUR). Klasik müzeler, popüler biletli lokasyonlar öner."
     else:
-        butce_kurali = "Bütçe: Yüksek (50-150 EUR). Lüks restoranlar, premium turlar, sanat galerileri ve pahalı/exclusive deneyimler öner."
+        butce_kurali = "Bütçe: Yüksek (50-150 EUR). Lüks restoranlar, VIP turlar öner."
+
+    # SEYAHAT HIZI (PACE) KURALI
+    if "Hızlı" in seyahat_hizi:
+        hiz_kurali = "Günde 7-9 mekan seç. 'ort_sure' değerlerini kısa (30-45 dk) tut. Hızlı ve yorucu bir keşif rotası olsun."
+    elif "Yavaş" in seyahat_hizi:
+        hiz_kurali = "Günde 3-4 mekan seç. 'ort_sure' değerlerini çok uzun (90-150 dk) tut. Keyifli ve sakin bir rota olsun."
+    else:
+        hiz_kurali = "Günde 5-6 mekan seç. 'ort_sure' değerlerini dengeli (60-90 dk) tut."
+
+    # HARD-CAP BÜTÇE SINIRI KURALI
+    hard_cap_kurali = ""
+    if sehir_butce_siniri > 0:
+        hard_cap_kurali = f"\nKESİN KURAL: Bu {sehir_adi} şehri için oluşturduğun {gun_sayisi} günlük rotadaki tüm mekanların 'tahmini_maliyet_eur' TOPLAMI {sehir_butce_siniri} Euro'yu ASLA GEÇMEMELİDİR! Sınırı korumak için gerekirse ücretli yerleri silip tamamen ücretsiz (0 EUR) mekanlar ekle."
 
     prompt = f"""
     Kullanıcının ana isteği: {ana_istek}
-    Görev: SADECE {sehir_adi} şehri için {gun_sayisi} günlük rota oluştur. Her gün 5-6 mekan olsun.
+    Görev: SADECE {sehir_adi} şehri için {gun_sayisi} günlük rota oluştur. 
     
-    YENİ GÖREV (SEYAHAT TARZI VE BÜTÇE HEDEFİ): {butce_kurali}
-    Seçtiğin mekanların 'tahmini_maliyet_eur' değerleri ve 'kategori' tipleri tamamen bu hedefe uygun olmalıdır. Koordinatları (lat, lon) gerçekçi ver.
+    YENİ GÖREV (HIZ): {hiz_kurali}
+    YENİ GÖREV (TARZ): {butce_kurali} {hard_cap_kurali}
+    
+    Seçtiğin mekanların 'tahmini_maliyet_eur' değerlerini bu kurallara göre belirle. Koordinatları (lat, lon) gerçekçi ver.
     
     SADECE JSON FORMATINDA ÇIKTI VER:
     [
@@ -384,16 +401,27 @@ with st.sidebar:
     st.subheader("📅 Seyahat Tarihi")
     start_date = st.date_input("Tur Başlangıç Tarihi", value=date.today() + timedelta(days=5))
     
-    st.subheader("🎒 Seyahat Tarzı")
+    st.markdown("---")
+    st.subheader("🎒 Seyahat Dinamikleri")
     seyahat_tarzi = st.selectbox(
         "Bütçe ve Konfor Beklentiniz",
-        [
-            "Ekonomik (Sırt Çantalı / Öğrenci)", 
-            "Standart (Klasik Turist)", 
-            "Premium (Lüks & Konfor)"
-        ]
+        ["Ekonomik (Sırt Çantalı / Öğrenci)", "Standart (Klasik Turist)", "Premium (Lüks & Konfor)"],
+        index=1
     )
     
+    seyahat_hizi = st.selectbox(
+        "Seyahat Hızı (Mekan Yoğunluğu)",
+        ["Yavaş (Günde 3-4 Mekan, Uzun Molalar)", "Normal (Günde 5-6 Mekan, Dengeli)", "Hızlı (Günde 7-9 Mekan, Keşif Odaklı)"],
+        index=1
+    )
+    
+    maksimum_butce = st.number_input(
+        "Toplam Maksimum Bütçe (EUR) - Opsiyonel", 
+        min_value=0, value=0, step=50, 
+        help="0 bırakırsanız yapay zeka sınır olmadan bütçe hesaplar. Değer girerseniz bütçenizi asla aşmaz."
+    )
+    
+    st.markdown("---")
     st.subheader("Günlük Zaman Planı")
     col1, col2 = st.columns(2)
     with col1:
@@ -405,18 +433,18 @@ with st.sidebar:
     st.subheader("🤖 Yapay Zeka Asistanı")
     user_ai_prompt = st.text_area(
         "Tüm seyahat planını detaylıca yaz:", 
-        placeholder="Örn: 3 gün Prag, 2 gün Viyana. Bol bol tarihi yer görelim.",
+        placeholder="Örn: 2 gün Prag, 1 gün Viyana. Müzeler ağırlıklı olsun.",
         height=130
     )
     
     st.markdown("---")
     generate_btn = st.button("Rotayı ve Bütçeyi Hesapla 🚀", use_container_width=True)
 
+
 # --- 6. ANA UYGULAMA MANTIĞI VE SEKMELER ---
 st.title("🗺️ Global Rota Planlayıcı V2")
-st.caption("Seyahat tarzınıza göre mekanları optimize eder, biletlerinizi bulur ve canlı navigasyon rotanızı çizer.")
+st.caption("Seyahat tarzınıza, hızınıza ve bütçe sınırınıza göre mükemmel rotayı çizer.")
 
-# --- HAFIZA (SESSION STATE) KONTROLÜ ---
 if "plan_olusturuldu" not in st.session_state:
     st.session_state.plan_olusturuldu = False
 
@@ -434,23 +462,31 @@ if generate_btn:
         if not istek_listesi:
             st.error("Girdiğiniz metin analiz edilemedi. Lütfen daha net yazın.")
         else:
+            # Toplam gün sayısını bul ve bütçeyi şehirlere dağıt
+            toplam_gun = sum([islem["gun_sayisi"] for islem in istek_listesi])
+            
             for islem in istek_listesi:
                 sehir = islem["sehir_adi"]
                 gun = islem["gun_sayisi"]
                 ozel = islem["ozel_istek_mi"]
                 
-                with st.spinner(f"📍 {sehir} ({gun} Gün) için '{seyahat_tarzi}' rotası hazırlanıyor..."):
+                # Bütçeyi şehirlere gün ağırlıklı olarak dağıt
+                sehir_butcesi = 0
+                if maksimum_butce > 0 and toplam_gun > 0:
+                    sehir_butcesi = int((maksimum_butce / toplam_gun) * gun)
+                
+                with st.spinner(f"📍 {sehir} ({gun} Gün) için rota hesaplanıyor..."):
                     sehir_plani = None
                     if not ozel:
-                        sehir_plani = cache_den_getir(sehir, gun, seyahat_tarzi)
+                        sehir_plani = cache_den_getir(sehir, gun, seyahat_tarzi, seyahat_hizi, sehir_butcesi)
                         if sehir_plani:
-                            st.success(f"⚡ {sehir} ({seyahat_tarzi.split(' ')[0]}) rotası önbellekten çekildi!")
+                            st.success(f"⚡ {sehir} rotası önbellekten çekildi!")
                     
                     if not sehir_plani:
-                        sehir_plani = yapay_zekadan_sehir_rotasi_iste(sehir, gun, user_ai_prompt, seyahat_tarzi)
+                        sehir_plani = yapay_zekadan_sehir_rotasi_iste(sehir, gun, user_ai_prompt, seyahat_tarzi, seyahat_hizi, sehir_butcesi)
                         if sehir_plani:
-                            st.success(f"🧠 {sehir} rotası sıfırdan çizildi ve bütçelendirildi!")
-                            cache_e_kaydet(sehir, gun, sehir_plani, ozel, seyahat_tarzi)
+                            st.success(f"🧠 {sehir} rotası sıfırdan çizildi!")
+                            cache_e_kaydet(sehir, gun, sehir_plani, ozel, seyahat_tarzi, seyahat_hizi, sehir_butcesi)
                     
                     if sehir_plani:
                         for gun_verisi in sehir_plani:
@@ -481,29 +517,34 @@ if generate_btn:
                         
                         genel_toplam_maliyet += gunluk_maliyet
 
-                # --- VERİLERİ HAFIZAYA KAYDET ---
+                # Hafızaya al
                 st.session_state.multi_day_plan = multi_day_plan
                 st.session_state.genel_toplam_maliyet = genel_toplam_maliyet
                 st.session_state.full_pdf_bytes = generate_full_travel_booklet(
-                    multi_day_plan, start_time, end_time, round(genel_toplam_maliyet, 2), seyahat_tarzi
+                    multi_day_plan, start_time, end_time, round(genel_toplam_maliyet, 2), seyahat_tarzi, seyahat_hizi
                 )
                 st.session_state.seyahat_tarzi = seyahat_tarzi
+                st.session_state.seyahat_hizi = seyahat_hizi
                 st.session_state.plan_olusturuldu = True
-                st.rerun() # Hafızaya aldıktan sonra ekranı temizce yenile
+                st.rerun()
 
-# --- HAFIZADAKİ VERİYİ EKRANA BASMA BÖLÜMÜ ---
 if st.session_state.plan_olusturuldu:
     st.balloons()
     
     st.markdown("---")
+    
+    # Bütçe Sınırı Aşıldı Mı Kontrolü (Görsel Uyarı İçin)
+    if maksimum_butce > 0 and st.session_state.genel_toplam_maliyet > maksimum_butce:
+        st.warning(f"⚠️ **Dikkat:** Hedeflenen bütçeyi (Maks {maksimum_butce} EUR) aştınız. Şehirler arası ulaşım biletleri bütçe sınırına tabi değildir.")
+        
     st.success(f"### 💶 Tahmini Toplam Tur Maliyeti: **{round(st.session_state.genel_toplam_maliyet, 2)} EUR**")
-    st.caption(f"*(Seçilen Profil: {st.session_state.seyahat_tarzi}. Ulaşım biletleri, müze girişleri, yeme-içme dahildir.)*")
+    st.caption(f"*(Seçilen Profil: {st.session_state.seyahat_tarzi} | Hız: {st.session_state.seyahat_hizi})*")
     st.markdown("---")
     
     st.download_button(
         label="📥 BÜTÇELİ SEYAHAT KİTAPÇIĞINI PDF OLARAK İNDİR",
         data=st.session_state.full_pdf_bytes,
-        file_name="Avrupa_Turu_Seyahat_Kitapcigi_Butceli.pdf",
+        file_name="Avrupa_Turu_Seyahat_Kitapcigi.pdf",
         mime="application/pdf",
         use_container_width=True
     )
