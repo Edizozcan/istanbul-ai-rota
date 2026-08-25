@@ -3,10 +3,13 @@ import pandas as pd
 import math
 import json
 from datetime import time, timedelta
+from time import sleep
 import google.generativeai as genai
 import folium
 from streamlit_folium import folium_static
 import io
+import unicodedata  # <--- EKSİK OLAN SATIR BU
+import requests
 
 # ReportLab kütüphaneleri
 from reportlab.lib.pagesizes import letter
