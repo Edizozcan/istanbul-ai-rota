@@ -158,7 +158,7 @@ def transit_maliyet_hesapla(kalkis_sehri, varis_sehri, tarih):
 # --- 2. EVRENSEL KARAKTER TEMİZLEME (PDF İÇİN) ---
 def tr_to_en(text):
     text = str(text)
-    text = text.replace('ı', 'i').replace('İ', 'I')
+    text = text.replace('ı', 'i').replace('İ', 'I').replace('ö', 'o').replace('Ö', 'O').replace('ü', 'u').replace('Ü', 'U').replace('ç', 'c').replace('Ç', 'C').replace('ş', 's').replace('Ş', 'S').replace('ğ', 'g').replace('Ğ', 'G')
     text = ''.join(c for c in unicodedata.normalize('NFKD', text) if unicodedata.category(c) != 'Mn')
     return text
 
@@ -250,7 +250,7 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
     return buffer.getvalue()
 
 
-# --- 4. CACHE VE YAPAY ZEKA MODÜLLERİ (YENİ MİMARİ) ---
+# --- 4. CACHE VE YAPAY ZEKA MODÜLLERİ ---
 def cache_den_getir(sehir_adi, gun_sayisi):
     if supabase is None: return None
     try:
@@ -318,6 +318,27 @@ def yapay_zekadan_sehir_rotasi_iste(sehir_adi, gun_sayisi, ana_istek):
 # --- 5. ARAYÜZ VE GİRDİLER ---
 st.set_page_config(page_title="Global Rota Planlayıcı V2 + Bütçe", layout="wide", initial_sidebar_state="expanded")
 
+# CSS: Metin taşmalarını önle ve genel arayüz estetiğini iyileştir
+st.markdown("""
+    <style>
+    .stMarkdown, .stText, p, div { word-wrap: break-word; }
+    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
+    .stTabs [data-baseweb="tab"] { border-radius: 4px 4px 0px 0px; padding: 10px 20px; }
+    </style>
+""", unsafe_allow_html=True)
+
+# Popüler şehirler için görsel banner sözlüğü
+sehir_gorselleri = {
+    "prag": "https://images.unsplash.com/photo-1519677100203-a0e668c92439?auto=format&fit=crop&w=1200&q=80",
+    "amsterdam": "https://images.unsplash.com/photo-1534351590666-13e3e96b5017?auto=format&fit=crop&w=1200&q=80",
+    "koln": "https://images.unsplash.com/photo-1558223616-e5db369cfbb8?auto=format&fit=crop&w=1200&q=80",
+    "viyana": "https://images.unsplash.com/photo-1516550893923-42d28e5677af?auto=format&fit=crop&w=1200&q=80",
+    "paris": "https://images.unsplash.com/photo-1502602881469-411327c62c95?auto=format&fit=crop&w=1200&q=80",
+    "berlin": "https://images.unsplash.com/photo-1560969184-10fe8719e047?auto=format&fit=crop&w=1200&q=80",
+    "londra": "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?auto=format&fit=crop&w=1200&q=80",
+    "roma": "https://images.unsplash.com/photo-1552832230-c0197dd311b5?auto=format&fit=crop&w=1200&q=80"
+}
+
 with st.sidebar:
     st.header("🌍 Büyük Avrupa Turu")
     
@@ -352,7 +373,7 @@ if generate_btn:
     else:
         multi_day_plan = []
         genel_gun_sayaci = 1 
-        genel_toplam_maliyet = 0.0 # BÜTÇE SEYACIMIZ
+        genel_toplam_maliyet = 0.0
         
         with st.spinner("🧠 Yapay zeka niyetinizi ayrıştırıyor..."):
             istek_listesi = kullanici_niyetini_analiz_et(user_ai_prompt)
@@ -388,16 +409,13 @@ if generate_btn:
                 st.warning("Hiçbir şehir için rota oluşturulamadı. Lütfen tekrar deneyin.")
             else:
                 
-                # --- TRANSIT (FLIXBUS) VE TOTAL MALİYET HESAPLAMA ---
-                with st.spinner("🚌 Şehirler arası ulaşım biletleri ve toplam bütçe hesaplanıyor..."):
+                # --- TRANSIT VE MALİYET HESAPLAMA ---
+                with st.spinner("🚌 Ulaşım biletleri ve toplam bütçe hesaplanıyor..."):
                     for i in range(len(multi_day_plan)):
                         gunluk_maliyet = 0.0
-                        
-                        # 1. Mekanların Maliyetini Topla
                         for mekan in multi_day_plan[i]['mekanlar']:
                             gunluk_maliyet += mekan.get('tahmini_maliyet_eur', 0)
                         
-                        # 2. Varsa Şehirler Arası Geçiş (Flixbus) Maliyetini Ekle
                         if i > 0:
                             onceki_sehir = multi_day_plan[i-1]['sehir']
                             yeni_sehir = multi_day_plan[i]['sehir']
@@ -410,7 +428,6 @@ if generate_btn:
                                 multi_day_plan[i]['transit'] = transit_sonuc
                                 gunluk_maliyet += transit_sonuc['fiyat']
                         
-                        # Günlük maliyeti genel toplama ekle
                         genel_toplam_maliyet += gunluk_maliyet
 
                 st.balloons()
@@ -421,7 +438,7 @@ if generate_btn:
                 st.caption("*(Ulaşım biletleri, müze girişleri, yeme-içme ve aktiviteler dahildir. Otel/Uçak hariçtir.)*")
                 st.markdown("---")
                 
-                # --- ANA SAYFADA TÜM TURU TEK PDF OLARAK İNDİRME BUTONU ---
+                # --- PDF İNDİRME BUTONU ---
                 full_pdf_bytes = generate_full_travel_booklet(multi_day_plan, start_time, end_time, round(genel_toplam_maliyet, 2))
                 st.download_button(
                     label="📥 BÜTÇELİ SEYAHAT KİTAPÇIĞINI PDF OLARAK İNDİR",
@@ -441,7 +458,11 @@ if generate_btn:
                         city_name = day_data['sehir']
                         df_day = pd.DataFrame(day_data['mekanlar'])
                         
-                        # --- TRANSIT BİLGİSİNİ ARAYÜZE BAS ---
+                        # --- GÖRSEL BANNER (KAPAK FOTOĞRAFI) ---
+                        sehir_key = tr_to_en(city_name).lower()
+                        if sehir_key in sehir_gorselleri:
+                            st.image(sehir_gorselleri[sehir_key], use_column_width=True, caption=f"✨ {city_name} Manzarası")
+                        
                         if 'transit' in day_data:
                             t_info = day_data['transit']
                             if t_info['durum'] == 'basarili':
@@ -464,7 +485,8 @@ if generate_btn:
                         if gunluk_rota.empty:
                             st.warning("Zaman yetersiz!")
                         else:
-                            map_col, timeline_col = st.columns([3, 2])
+                            # Sütun oranları [1, 1] yapılarak yazı taşmaları engellendi
+                            map_col, timeline_col = st.columns([1, 1])
                             
                             with map_col:
                                 map_center = [gunluk_rota['lat'].mean(), gunluk_rota['lon'].mean()]
@@ -483,7 +505,7 @@ if generate_btn:
                                     ).add_to(m)
                                     
                                 folium.PolyLine(locations=route_coords, color="red", weight=4, opacity=0.7, dash_array='10').add_to(m)
-                                folium_static(m, width=550, height=450)
+                                folium_static(m, width=400, height=450)
                                 
                             with timeline_col:
                                 st.subheader(f"📍 {city_name} Çizelgesi")
