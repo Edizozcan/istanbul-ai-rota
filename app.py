@@ -2,13 +2,13 @@ import streamlit as st
 import pandas as pd
 import math
 import json
-from datetime import time, timedelta
+from datetime import time, timedelta, date
 from time import sleep
 import google.generativeai as genai
 import folium
 from streamlit_folium import folium_static
 import io
-import unicodedata  # <--- EKSİK OLAN SATIR BU
+import unicodedata
 import requests
 
 # ReportLab kütüphaneleri
@@ -80,52 +80,103 @@ def optimize_route(df, start_lat, start_lon, total_minutes):
             
     return pd.DataFrame(route)
 
+# --- 1.5 ULAŞIM VE BÜTÇE HESAPLAMA MOTORU (FLIXBUS + OSRM) ---
+def koordinat_bul(sehir_adi):
+    url = f"https://nominatim.openstreetmap.org/search?q={sehir_adi}&format=json&limit=1"
+    headers = {"User-Agent": "RotaPlanlayiciApp/1.0"}
+    try:
+        res = requests.get(url, headers=headers, timeout=5).json()
+        if res:
+            return float(res[0]["lat"]), float(res[0]["lon"])
+    except: pass
+    return None, None
+
+def osrm_mesafe_cek(lat1, lon1, lat2, lon2):
+    url = f"http://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}?overview=false"
+    try:
+        res = requests.get(url, timeout=5).json()
+        if res.get("code") == "Ok":
+            return res["routes"][0]["distance"] / 1000.0
+    except: pass
+    return None
+
+def flixbus_sehir_kodu_bul(sehir_adi):
+    url = "https://global.api.flixbus.com/search/autocomplete/cities"
+    params = {"q": sehir_adi, "lang": "en"}
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        res = requests.get(url, params=params, headers=headers, timeout=5).json()
+        if res and len(res) > 0:
+            return res[0]['id']
+    except: pass
+    return None
+
+def flixbus_minimum_fiyat_cek(kalkis_id, varis_id, tarih):
+    url = "https://global.api.flixbus.com/search/service/v4/search"
+    params = {
+        "from_city_id": kalkis_id,
+        "to_city_id": varis_id,
+        "departure_date": tarih,
+        "products": '{"adult":1}',
+        "currency": "EUR",
+        "locale": "en",
+        "search_by": "cities"
+    }
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        res = requests.get(url, params=params, headers=headers, timeout=8).json()
+        if "trips" in res and len(res["trips"]) > 0 and res["trips"][0].get("results"):
+            seferler = res["trips"][0]["results"]
+            fiyatlar = [detaylar["price"]["total"] for sefer_id, detaylar in seferler.items() if detaylar.get("status") == "available"]
+            if fiyatlar:
+                return min(fiyatlar)
+    except: pass
+    return None
+
+def transit_maliyet_hesapla(kalkis_sehri, varis_sehri, tarih):
+    k_id = flixbus_sehir_kodu_bul(kalkis_sehri)
+    v_id = flixbus_sehir_kodu_bul(varis_sehri)
+    
+    ham_fiyat = None
+    if k_id and v_id:
+        ham_fiyat = flixbus_minimum_fiyat_cek(k_id, v_id, tarih)
+        
+    if ham_fiyat is not None:
+        son_fiyat = ham_fiyat + 0.49 if ham_fiyat < 15.0 else ham_fiyat + 0.99
+        return {"durum": "basarili", "kaynak": "Flixbus API", "fiyat": round(son_fiyat, 2), "mesaj": f"Otobüs Bileti ({kalkis_sehri} -> {varis_sehri})"}
+        
+    lat1, lon1 = koordinat_bul(kalkis_sehri)
+    lat2, lon2 = koordinat_bul(varis_sehri)
+    
+    if lat1 and lon1 and lat2 and lon2:
+        mesafe_km = osrm_mesafe_cek(lat1, lon1, lat2, lon2)
+        if mesafe_km:
+            return {"durum": "tahmini", "kaynak": "OSRM Mesafe", "fiyat": round(mesafe_km * 0.08, 2), "mesaj": f"Tahmini Karayolu Maliyeti ({round(mesafe_km, 1)} km)"}
+            
+    return {"durum": "varsayilan", "kaynak": "Varsayılan", "fiyat": 45.00, "mesaj": f"Standart Bölge Geçişi"}
+
 # --- 2. EVRENSEL KARAKTER TEMİZLEME (PDF İÇİN) ---
 def tr_to_en(text):
     text = str(text)
-    # Türkçe İ ve ı harfleri unicodedata ile sorun çıkarabilir, manuel düzeltiyoruz:
     text = text.replace('ı', 'i').replace('İ', 'I')
-    
-    # Kalan tüm dillerdeki (Çekçe, Almanca vb.) aksanlı harfleri evrensel olarak temizler:
     text = ''.join(c for c in unicodedata.normalize('NFKD', text) if unicodedata.category(c) != 'Mn')
-    
     return text
 
 # --- 3. TEK PARÇA TÜM SEYAHATİ PDF YAPMA FONKSİYONU ---
-def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_input):
+def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_input, genel_toplam_maliyet):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
     story = []
     
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle(
-        'BookletTitle',
-        parent=styles['Heading1'],
-        fontSize=24,
-        textColor=colors.HexColor("#1f4e78"),
-        spaceAfter=10,
-        alignment=1 # Ortala
-    )
-    subtitle_style = ParagraphStyle(
-        'BookletSub',
-        parent=styles['Normal'],
-        fontSize=12,
-        textColor=colors.HexColor("#595959"),
-        spaceAfter=25,
-        alignment=1
-    )
-    day_heading = ParagraphStyle(
-        'DayHeading',
-        parent=styles['Heading2'],
-        fontSize=16,
-        textColor=colors.HexColor("#2f5597"),
-        spaceAfter=10,
-        spaceBefore=10
-    )
+    title_style = ParagraphStyle('BookletTitle', parent=styles['Heading1'], fontSize=24, textColor=colors.HexColor("#1f4e78"), spaceAfter=10, alignment=1)
+    subtitle_style = ParagraphStyle('BookletSub', parent=styles['Normal'], fontSize=12, textColor=colors.HexColor("#595959"), spaceAfter=15, alignment=1)
+    budget_style = ParagraphStyle('BudgetStyle', parent=styles['Heading2'], fontSize=16, textColor=colors.HexColor("#2e75b6"), spaceAfter=25, alignment=1)
+    day_heading = ParagraphStyle('DayHeading', parent=styles['Heading2'], fontSize=16, textColor=colors.HexColor("#2f5597"), spaceAfter=10, spaceBefore=10)
     
-    # Kapak / Başlık Bilgisi
     story.append(Paragraph(tr_to_en("KURESEL SEYAHAT KITAPCIGI"), title_style))
     story.append(Paragraph(tr_to_en("Global Rota Planlayici V2 ile Otonom Olarak Olusturulmustur"), subtitle_style))
+    story.append(Paragraph(tr_to_en(f"Tahmini Toplam Tur Butcesi (Ulasim + Aktiviteler): {genel_toplam_maliyet} EUR"), budget_style))
     story.append(Spacer(1, 15))
     
     start_dt_base = pd.Timestamp(f"2000-01-01 {start_time_input}")
@@ -147,8 +198,17 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
         
         story.append(Paragraph(tr_to_en(f"Gun {gun_no} - Sehir: {sehir_adi}"), day_heading))
         
-        table_data = [[tr_to_en("Saat Araligi"), tr_to_en("Durak Adi"), tr_to_en("Kategori"), tr_to_en("Gecis / Ziyaret")]]
+        table_data = [[tr_to_en("Saat Araligi"), tr_to_en("Durak Adi"), tr_to_en("Kategori & Ucret"), tr_to_en("Gecis / Ziyaret")]]
         
+        if 'transit' in day_data:
+            t = day_data['transit']
+            table_data.append([
+                "SABAH", 
+                tr_to_en(f"Transit: {t['mesaj']}"), 
+                tr_to_en(f"Ulasim | {t['fiyat']} EUR"), 
+                tr_to_en(f"Kaynak: {t['kaynak']}")
+            ])
+
         current_time = start_dt_base
         for idx, row in gunluk_rota.iterrows():
             current_time += timedelta(minutes=int(row['travel_time']))
@@ -156,14 +216,16 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
             current_time += timedelta(minutes=int(row['ort_sure']))
             cikis_saati = current_time.strftime('%H:%M')
             
+            mekan_maliyet = row.get('tahmini_maliyet_eur', 0)
+            
             zaman_str = f"{varis_saati} - {cikis_saati}"
             durak_str = tr_to_en(f"{idx+1}. {row['name']}")
-            kat_str = tr_to_en(str(row['kategori']))
+            kat_str = tr_to_en(f"{row['kategori']} | {mekan_maliyet} EUR")
             sure_str = tr_to_en(f"Yol: {int(row['travel_time'])}dk | Sure: {row['ort_sure']}dk")
             
             table_data.append([zaman_str, durak_str, kat_str, sure_str])
             
-        t = Table(table_data, colWidths=[85, 190, 100, 180])
+        t = Table(table_data, colWidths=[80, 185, 105, 170])
         t.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2f5597")),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -233,13 +295,15 @@ def yapay_zekadan_sehir_rotasi_iste(sehir_adi, gun_sayisi, ana_istek):
     Görev: SADECE {sehir_adi} şehri için {gun_sayisi} günlük rota oluştur. Her gün 5-6 mekan olsun.
     Mekanların ENLEM (lat) ve BOYLAM (lon) koordinatları gerçekçi olsun.
     
+    YENİ GÖREV: Her mekan için Euro cinsinden tahmini bir maliyet ekle. (Örn: Ücretsiz parklar için 0, Müzeler için 10-25, Restoranlar için 15-40).
+    
     SADECE JSON FORMATINDA ÇIKTI VER:
     [
         {{
             "gun": 1,
             "sehir": "{sehir_adi}",
             "mekanlar": [
-                {{"name": "Mekan Adı", "lat": 40.0, "lon": 20.0, "kategori": "Tarihi", "ort_sure": 60}}
+                {{"name": "Mekan Adı", "lat": 40.0, "lon": 20.0, "kategori": "Tarihi", "ort_sure": 60, "tahmini_maliyet_eur": 15}}
             ]
         }}
     ]
@@ -252,10 +316,13 @@ def yapay_zekadan_sehir_rotasi_iste(sehir_adi, gun_sayisi, ana_istek):
         return None
 
 # --- 5. ARAYÜZ VE GİRDİLER ---
-st.set_page_config(page_title="Global Rota Planlayıcı V2 + Kitapçık PDF", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Global Rota Planlayıcı V2 + Bütçe", layout="wide", initial_sidebar_state="expanded")
 
 with st.sidebar:
     st.header("🌍 Büyük Avrupa Turu")
+    
+    st.subheader("📅 Seyahat Tarihi")
+    start_date = st.date_input("Tur Başlangıç Tarihi", value=date.today() + timedelta(days=5))
     
     st.subheader("Günlük Zaman Planı")
     col1, col2 = st.columns(2)
@@ -273,18 +340,19 @@ with st.sidebar:
     )
     
     st.markdown("---")
-    generate_btn = st.button("Devasa Planı ve Kitapçığı Oluştur 🚀", use_container_width=True)
+    generate_btn = st.button("Rotayı ve Bütçeyi Hesapla 🚀", use_container_width=True)
 
 # --- 6. ANA UYGULAMA MANTIĞI VE SEKMELER ---
-st.title("🗺️ Global Rota Planlayıcı V2 (Akıllı Önbellek & PDF Kitapçık)")
-st.caption("Yapay zeka planınızı şehir şehir ayrıştırır, varsa veritabanından saniyesinde çeker, yoksa sıfırdan oluşturur.")
+st.title("🗺️ Global Rota Planlayıcı V2 (Bütçe Motorlu)")
+st.caption("Seyahat rotanızı optimize eder, otobüs biletlerinizi bulur ve müze/yemek masraflarıyla genel bütçeyi hesaplar.")
 
 if generate_btn:
     if not user_ai_prompt:
         st.error("Lütfen hayalinizdeki seyahat planını yazın!")
     else:
         multi_day_plan = []
-        genel_gun_sayaci = 1 # Sekmelerin ve günlerin sırayla gitmesi için sayaç
+        genel_gun_sayaci = 1 
+        genel_toplam_maliyet = 0.0 # BÜTÇE SEYACIMIZ
         
         with st.spinner("🧠 Yapay zeka niyetinizi ayrıştırıyor..."):
             istek_listesi = kullanici_niyetini_analiz_et(user_ai_prompt)
@@ -297,20 +365,19 @@ if generate_btn:
                 gun = islem["gun_sayisi"]
                 ozel = islem["ozel_istek_mi"]
                 
-                with st.spinner(f"📍 {sehir} ({gun} Gün) için veriler hazırlanıyor..."):
+                with st.spinner(f"📍 {sehir} ({gun} Gün) için rota ve mekan maliyetleri hazırlanıyor..."):
                     sehir_plani = None
                     if not ozel:
                         sehir_plani = cache_den_getir(sehir, gun)
                         if sehir_plani:
-                            st.success(f"⚡ {sehir} rotası Supabase önbelleğinden çekildi!")
+                            st.success(f"⚡ {sehir} rotası önbellekten çekildi!")
                     
                     if not sehir_plani:
                         sehir_plani = yapay_zekadan_sehir_rotasi_iste(sehir, gun, user_ai_prompt)
                         if sehir_plani:
-                            st.success(f"🧠 {sehir} rotası yapay zeka tarafından özel olarak çizildi!")
+                            st.success(f"🧠 {sehir} rotası sıfırdan çizildi ve bütçelendirildi!")
                             cache_e_kaydet(sehir, gun, sehir_plani, ozel)
                     
-                    # Gün numaralarını ana plana göre ardışık olacak şekilde düzenle
                     if sehir_plani:
                         for gun_verisi in sehir_plani:
                             gun_verisi["gun"] = genel_gun_sayaci
@@ -320,15 +387,46 @@ if generate_btn:
             if not multi_day_plan:
                 st.warning("Hiçbir şehir için rota oluşturulamadı. Lütfen tekrar deneyin.")
             else:
+                
+                # --- TRANSIT (FLIXBUS) VE TOTAL MALİYET HESAPLAMA ---
+                with st.spinner("🚌 Şehirler arası ulaşım biletleri ve toplam bütçe hesaplanıyor..."):
+                    for i in range(len(multi_day_plan)):
+                        gunluk_maliyet = 0.0
+                        
+                        # 1. Mekanların Maliyetini Topla
+                        for mekan in multi_day_plan[i]['mekanlar']:
+                            gunluk_maliyet += mekan.get('tahmini_maliyet_eur', 0)
+                        
+                        # 2. Varsa Şehirler Arası Geçiş (Flixbus) Maliyetini Ekle
+                        if i > 0:
+                            onceki_sehir = multi_day_plan[i-1]['sehir']
+                            yeni_sehir = multi_day_plan[i]['sehir']
+                            
+                            if onceki_sehir != yeni_sehir:
+                                gecis_tarihi_obj = start_date + timedelta(days=multi_day_plan[i]['gun'] - 1)
+                                gecis_tarihi_str = gecis_tarihi_obj.strftime("%d.%m.%Y")
+                                
+                                transit_sonuc = transit_maliyet_hesapla(onceki_sehir, yeni_sehir, gecis_tarihi_str)
+                                multi_day_plan[i]['transit'] = transit_sonuc
+                                gunluk_maliyet += transit_sonuc['fiyat']
+                        
+                        # Günlük maliyeti genel toplama ekle
+                        genel_toplam_maliyet += gunluk_maliyet
+
                 st.balloons()
                 
+                # --- DEVASA BÜTÇE EKRANI ---
+                st.markdown("---")
+                st.success(f"### 💶 Tahmini Toplam Tur Maliyeti: **{round(genel_toplam_maliyet, 2)} EUR**")
+                st.caption("*(Ulaşım biletleri, müze girişleri, yeme-içme ve aktiviteler dahildir. Otel/Uçak hariçtir.)*")
+                st.markdown("---")
+                
                 # --- ANA SAYFADA TÜM TURU TEK PDF OLARAK İNDİRME BUTONU ---
-                full_pdf_bytes = generate_full_travel_booklet(multi_day_plan, start_time, end_time)
-                st.success("🎉 Devasa seyahat planınız başarıyla oluşturuldu! Aşağıdaki butondan tüm turu tek bir PDF Kitapçık olarak indirebilirsiniz:")
+                full_pdf_bytes = generate_full_travel_booklet(multi_day_plan, start_time, end_time, round(genel_toplam_maliyet, 2))
                 st.download_button(
-                    label="📥 TÜM SEYAHATİ PDF KİTAPÇIK OLARAK İNDİR (TÜM GÜNLER)",
+                    label="📥 BÜTÇELİ SEYAHAT KİTAPÇIĞINI PDF OLARAK İNDİR",
                     data=full_pdf_bytes,
-                    file_name="Avrupa_Turu_Seyahat_Kitapcigi.pdf",
+                    file_name="Avrupa_Turu_Seyahat_Kitapcigi_Butceli.pdf",
                     mime="application/pdf",
                     use_container_width=True
                 )
@@ -342,6 +440,14 @@ if generate_btn:
                         day_data = multi_day_plan[i]
                         city_name = day_data['sehir']
                         df_day = pd.DataFrame(day_data['mekanlar'])
+                        
+                        # --- TRANSIT BİLGİSİNİ ARAYÜZE BAS ---
+                        if 'transit' in day_data:
+                            t_info = day_data['transit']
+                            if t_info['durum'] == 'basarili':
+                                st.success(f"🚌 **Şehir Değişimi:** {t_info['mesaj']} | **Maliyet:** {t_info['fiyat']} € *(Kaynak: {t_info['kaynak']})*")
+                            else:
+                                st.warning(f"⚠️ **Şehir Değişimi (Tahmini):** {t_info['mesaj']} | **Maliyet:** {t_info['fiyat']} € *(Kaynak: {t_info['kaynak']})*")
                         
                         if df_day.empty:
                             continue
@@ -368,10 +474,11 @@ if generate_btn:
                                 for idx, row in gunluk_rota.iterrows():
                                     coord = [row['lat'], row['lon']]
                                     route_coords.append(coord)
+                                    mekan_maliyet = row.get('tahmini_maliyet_eur', 0)
                                     folium.Marker(
                                         location=coord,
-                                        tooltip=f"{idx+1}. {row['name']}",
-                                        popup=folium.Popup(f"<b>{idx+1}. Durak:</b> {row['name']}<br><i>{row['kategori']}</i>", max_width=250),
+                                        tooltip=f"{idx+1}. {row['name']} ({mekan_maliyet}€)",
+                                        popup=folium.Popup(f"<b>{idx+1}. Durak:</b> {row['name']}<br><i>{row['kategori']}</i><br><b>Maliyet:</b> {mekan_maliyet}€", max_width=250),
                                         icon=folium.Icon(color="darkblue", icon="info-sign")
                                     ).add_to(m)
                                     
@@ -389,7 +496,8 @@ if generate_btn:
                                     current_time += timedelta(minutes=int(row['ort_sure']))
                                     cikis_saati = current_time.strftime('%H:%M')
                                     
+                                    mekan_maliyet = row.get('tahmini_maliyet_eur', 0)
                                     st.warning(
                                         f"**{varis_saati} - {cikis_saati}** | 📍 {idx+1}. {row['name']}\n\n"
-                                        f"*Kategori: {row['kategori']} | Geçiş: {int(row['travel_time'])} dk*"
+                                        f"*Kategori: {row['kategori']} | 💶 {mekan_maliyet} € | Yol: {int(row['travel_time'])} dk*"
                                     )
