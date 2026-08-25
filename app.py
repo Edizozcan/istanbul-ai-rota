@@ -416,6 +416,10 @@ with st.sidebar:
 st.title("🗺️ Global Rota Planlayıcı V2")
 st.caption("Seyahat tarzınıza göre mekanları optimize eder, biletlerinizi bulur ve canlı navigasyon rotanızı çizer.")
 
+# --- HAFIZA (SESSION STATE) KONTROLÜ ---
+if "plan_olusturuldu" not in st.session_state:
+    st.session_state.plan_olusturuldu = False
+
 if generate_btn:
     if not user_ai_prompt:
         st.error("Lütfen hayalinizdeki seyahat planını yazın!")
@@ -457,7 +461,6 @@ if generate_btn:
             if not multi_day_plan:
                 st.warning("Hiçbir şehir için rota oluşturulamadı. Lütfen tekrar deneyin.")
             else:
-                
                 with st.spinner("🚌 Ulaşım biletleri ve toplam bütçe hesaplanıyor..."):
                     for i in range(len(multi_day_plan)):
                         gunluk_maliyet = 0.0
@@ -478,106 +481,116 @@ if generate_btn:
                         
                         genel_toplam_maliyet += gunluk_maliyet
 
-                st.balloons()
-                
-                st.markdown("---")
-                st.success(f"### 💶 Tahmini Toplam Tur Maliyeti: **{round(genel_toplam_maliyet, 2)} EUR**")
-                st.caption(f"*(Seçilen Profil: {seyahat_tarzi}. Ulaşım biletleri, müze girişleri, yeme-içme dahildir.)*")
-                st.markdown("---")
-                
-                full_pdf_bytes = generate_full_travel_booklet(multi_day_plan, start_time, end_time, round(genel_toplam_maliyet, 2), seyahat_tarzi)
-                st.download_button(
-                    label="📥 BÜTÇELİ SEYAHAT KİTAPÇIĞINI PDF OLARAK İNDİR",
-                    data=full_pdf_bytes,
-                    file_name="Avrupa_Turu_Seyahat_Kitapcigi_Butceli.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
+                # --- VERİLERİ HAFIZAYA KAYDET ---
+                st.session_state.multi_day_plan = multi_day_plan
+                st.session_state.genel_toplam_maliyet = genel_toplam_maliyet
+                st.session_state.full_pdf_bytes = generate_full_travel_booklet(
+                    multi_day_plan, start_time, end_time, round(genel_toplam_maliyet, 2), seyahat_tarzi
                 )
-                st.markdown("---")
+                st.session_state.seyahat_tarzi = seyahat_tarzi
+                st.session_state.plan_olusturuldu = True
+                st.rerun() # Hafızaya aldıktan sonra ekranı temizce yenile
+
+# --- HAFIZADAKİ VERİYİ EKRANA BASMA BÖLÜMÜ ---
+if st.session_state.plan_olusturuldu:
+    st.balloons()
+    
+    st.markdown("---")
+    st.success(f"### 💶 Tahmini Toplam Tur Maliyeti: **{round(st.session_state.genel_toplam_maliyet, 2)} EUR**")
+    st.caption(f"*(Seçilen Profil: {st.session_state.seyahat_tarzi}. Ulaşım biletleri, müze girişleri, yeme-içme dahildir.)*")
+    st.markdown("---")
+    
+    st.download_button(
+        label="📥 BÜTÇELİ SEYAHAT KİTAPÇIĞINI PDF OLARAK İNDİR",
+        data=st.session_state.full_pdf_bytes,
+        file_name="Avrupa_Turu_Seyahat_Kitapcigi_Butceli.pdf",
+        mime="application/pdf",
+        use_container_width=True
+    )
+    st.markdown("---")
+    
+    tab_titles = [f"📅 Gün {day['gun']} ({day['sehir']})" for day in st.session_state.multi_day_plan]
+    tabs = st.tabs(tab_titles)
+    
+    for i, tab in enumerate(tabs):
+        with tab:
+            day_data = st.session_state.multi_day_plan[i]
+            city_name = day_data['sehir']
+            df_day = pd.DataFrame(day_data['mekanlar'])
+            
+            sehir_key_raw = tr_to_en(city_name).strip().lower()
+            eslesen_gorsel = None
+            
+            for key, url in sehir_gorselleri.items():
+                if key in sehir_key_raw:
+                    eslesen_gorsel = url
+                    break
+                    
+            if eslesen_gorsel:
+                st.image(eslesen_gorsel, use_container_width=True, caption=f"✨ {city_name} Manzarası")
+            
+            if 'transit' in day_data:
+                t_info = day_data['transit']
+                if t_info['durum'] == 'basarili':
+                    st.success(f"🚌 **Şehir Değişimi:** {t_info['mesaj']} | **Maliyet:** {t_info['fiyat']} € *(Kaynak: {t_info['kaynak']})*")
+                else:
+                    st.warning(f"⚠️ **Şehir Değişimi (Tahmini):** {t_info['mesaj']} | **Maliyet:** {t_info['fiyat']} € *(Kaynak: {t_info['kaynak']})*")
+            
+            if df_day.empty:
+                continue
                 
-                tab_titles = [f"📅 Gün {day['gun']} ({day['sehir']})" for day in multi_day_plan]
-                tabs = st.tabs(tab_titles)
+            baslangic_lat = df_day.iloc[0]['lat']
+            baslangic_lon = df_day.iloc[0]['lon']
+            
+            start_dt = pd.Timestamp(f"2000-01-01 {start_time}")
+            end_dt = pd.Timestamp(f"2000-01-01 {end_time}")
+            total_available_minutes = int((end_dt - start_dt).total_seconds() / 60)
+            
+            gunluk_rota = optimize_route(df_day, baslangic_lat, baslangic_lon, total_available_minutes)
+            
+            if gunluk_rota.empty:
+                st.warning("Zaman yetersiz!")
+            else:
+                coords_list = [f"{row['lat']},{row['lon']}" for _, row in gunluk_rota.iterrows()]
+                gmaps_url = f"https://www.google.com/maps/dir/{'/'.join(coords_list)}"
                 
-                for i, tab in enumerate(tabs):
-                    with tab:
-                        day_data = multi_day_plan[i]
-                        city_name = day_data['sehir']
-                        df_day = pd.DataFrame(day_data['mekanlar'])
+                st.markdown(f"### [📍 Bu Günün Rotasını Google Haritalarda Canlı Başlat]({gmaps_url})")
+                st.write("")
+                
+                map_col, timeline_col = st.columns([1, 1])
+                
+                with map_col:
+                    map_center = [gunluk_rota['lat'].mean(), gunluk_rota['lon'].mean()]
+                    m = folium.Map(location=map_center, zoom_start=13)
+                    route_coords = []
+                    
+                    for idx, row in gunluk_rota.iterrows():
+                        coord = [row['lat'], row['lon']]
+                        route_coords.append(coord)
+                        mekan_maliyet = row.get('tahmini_maliyet_eur', 0)
+                        folium.Marker(
+                            location=coord,
+                            tooltip=f"{idx+1}. {row['name']} ({mekan_maliyet}€)",
+                            popup=folium.Popup(f"<b>{idx+1}. Durak:</b> {row['name']}<br><i>{row['kategori']}</i><br><b>Maliyet:</b> {mekan_maliyet}€", max_width=250),
+                            icon=folium.Icon(color="darkblue", icon="info-sign")
+                        ).add_to(m)
                         
-                        sehir_key_raw = tr_to_en(city_name).strip().lower()
-                        eslesen_gorsel = None
+                    folium.PolyLine(locations=route_coords, color="red", weight=4, opacity=0.7, dash_array='10').add_to(m)
+                    folium_static(m, width=400, height=450)
+                    
+                with timeline_col:
+                    st.subheader(f"📍 {city_name} Çizelgesi")
+                    current_time = start_dt
+                    st.info(f"**{current_time.strftime('%H:%M')}** | 🚶‍♂️ Güne Başlangıç")
+                    
+                    for idx, row in gunluk_rota.iterrows():
+                        current_time += timedelta(minutes=int(row['travel_time']))
+                        varis_saati = current_time.strftime('%H:%M')
+                        current_time += timedelta(minutes=int(row['ort_sure']))
+                        cikis_saati = current_time.strftime('%H:%M')
                         
-                        for key, url in sehir_gorselleri.items():
-                            if key in sehir_key_raw:
-                                eslesen_gorsel = url
-                                break
-                                
-                        if eslesen_gorsel:
-                            st.image(eslesen_gorsel, use_container_width=True, caption=f"✨ {city_name} Manzarası")
-                        
-                        if 'transit' in day_data:
-                            t_info = day_data['transit']
-                            if t_info['durum'] == 'basarili':
-                                st.success(f"🚌 **Şehir Değişimi:** {t_info['mesaj']} | **Maliyet:** {t_info['fiyat']} € *(Kaynak: {t_info['kaynak']})*")
-                            else:
-                                st.warning(f"⚠️ **Şehir Değişimi (Tahmini):** {t_info['mesaj']} | **Maliyet:** {t_info['fiyat']} € *(Kaynak: {t_info['kaynak']})*")
-                        
-                        if df_day.empty:
-                            continue
-                            
-                        baslangic_lat = df_day.iloc[0]['lat']
-                        baslangic_lon = df_day.iloc[0]['lon']
-                        
-                        start_dt = pd.Timestamp(f"2000-01-01 {start_time}")
-                        end_dt = pd.Timestamp(f"2000-01-01 {end_time}")
-                        total_available_minutes = int((end_dt - start_dt).total_seconds() / 60)
-                        
-                        gunluk_rota = optimize_route(df_day, baslangic_lat, baslangic_lon, total_available_minutes)
-                        
-                        if gunluk_rota.empty:
-                            st.warning("Zaman yetersiz!")
-                        else:
-                            # Harita Butonu Enjeksiyonu
-                            coords_list = [f"{row['lat']},{row['lon']}" for _, row in gunluk_rota.iterrows()]
-                            gmaps_url = f"https://www.google.com/maps/dir/{'/'.join(coords_list)}"
-                            
-                            st.markdown(f"### [📍 Bu Günün Rotasını Google Haritalarda Canlı Başlat]({gmaps_url})")
-                            st.write("")
-                            
-                            map_col, timeline_col = st.columns([1, 1])
-                            
-                            with map_col:
-                                map_center = [gunluk_rota['lat'].mean(), gunluk_rota['lon'].mean()]
-                                m = folium.Map(location=map_center, zoom_start=13)
-                                route_coords = []
-                                
-                                for idx, row in gunluk_rota.iterrows():
-                                    coord = [row['lat'], row['lon']]
-                                    route_coords.append(coord)
-                                    mekan_maliyet = row.get('tahmini_maliyet_eur', 0)
-                                    folium.Marker(
-                                        location=coord,
-                                        tooltip=f"{idx+1}. {row['name']} ({mekan_maliyet}€)",
-                                        popup=folium.Popup(f"<b>{idx+1}. Durak:</b> {row['name']}<br><i>{row['kategori']}</i><br><b>Maliyet:</b> {mekan_maliyet}€", max_width=250),
-                                        icon=folium.Icon(color="darkblue", icon="info-sign")
-                                    ).add_to(m)
-                                    
-                                folium.PolyLine(locations=route_coords, color="red", weight=4, opacity=0.7, dash_array='10').add_to(m)
-                                folium_static(m, width=400, height=450)
-                                
-                            with timeline_col:
-                                st.subheader(f"📍 {city_name} Çizelgesi")
-                                current_time = start_dt
-                                st.info(f"**{current_time.strftime('%H:%M')}** | 🚶‍♂️ Güne Başlangıç")
-                                
-                                for idx, row in gunluk_rota.iterrows():
-                                    current_time += timedelta(minutes=int(row['travel_time']))
-                                    varis_saati = current_time.strftime('%H:%M')
-                                    current_time += timedelta(minutes=int(row['ort_sure']))
-                                    cikis_saati = current_time.strftime('%H:%M')
-                                    
-                                    mekan_maliyet = row.get('tahmini_maliyet_eur', 0)
-                                    st.warning(
-                                        f"**{varis_saati} - {cikis_saati}** | 📍 {idx+1}. {row['name']}\n\n"
-                                        f"*Kategori: {row['kategori']} | 💶 {mekan_maliyet} € | Yol: {int(row['travel_time'])} dk*"
-                                    )
+                        mekan_maliyet = row.get('tahmini_maliyet_eur', 0)
+                        st.warning(
+                            f"**{varis_saati} - {cikis_saati}** | 📍 {idx+1}. {row['name']}\n\n"
+                            f"*Kategori: {row['kategori']} | 💶 {mekan_maliyet} € | Yol: {int(row['travel_time'])} dk*"
+                        )
