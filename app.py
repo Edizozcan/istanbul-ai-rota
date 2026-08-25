@@ -11,7 +11,7 @@ import io
 import unicodedata
 import requests
 
-# ReportLab kütüphaneleri
+# ReportLab kütüphaneleri 
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -163,21 +163,32 @@ def tr_to_en(text):
     return text
 
 # --- 3. TEK PARÇA TÜM SEYAHATİ PDF YAPMA FONKSİYONU ---
-def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_input, genel_toplam_maliyet):
+def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_input, genel_toplam_maliyet, seyahat_tarzi):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
     story = []
     
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('BookletTitle', parent=styles['Heading1'], fontSize=24, textColor=colors.HexColor("#1f4e78"), spaceAfter=10, alignment=1)
-    subtitle_style = ParagraphStyle('BookletSub', parent=styles['Normal'], fontSize=12, textColor=colors.HexColor("#595959"), spaceAfter=15, alignment=1)
-    budget_style = ParagraphStyle('BudgetStyle', parent=styles['Heading2'], fontSize=16, textColor=colors.HexColor("#2e75b6"), spaceAfter=25, alignment=1)
-    day_heading = ParagraphStyle('DayHeading', parent=styles['Heading2'], fontSize=16, textColor=colors.HexColor("#2f5597"), spaceAfter=10, spaceBefore=10)
+    title_style = ParagraphStyle('BookletTitle', parent=styles['Heading1'], fontSize=26, textColor=colors.HexColor("#1e3a8a"), spaceAfter=10, alignment=1, fontName='Helvetica-Bold')
+    subtitle_style = ParagraphStyle('BookletSub', parent=styles['Normal'], fontSize=12, textColor=colors.HexColor("#64748b"), spaceAfter=20, alignment=1)
+    
+    budget_style = ParagraphStyle(
+        'BudgetStyle', parent=styles['Heading2'], fontSize=14, textColor=colors.white, 
+        backColor=colors.HexColor("#10b981"), spaceAfter=30, alignment=1, 
+        borderPadding=(8, 15, 8, 15), borderRadius=5
+    )
+    
+    day_heading = ParagraphStyle('DayHeading', parent=styles['Heading2'], fontSize=18, textColor=colors.HexColor("#1e40af"), spaceAfter=10, spaceBefore=20, fontName='Helvetica-Bold')
+    maps_link_style = ParagraphStyle('MapsLink', parent=styles['Normal'], fontSize=10, textColor=colors.HexColor("#2563eb"), spaceAfter=15, fontName='Helvetica-Bold')
+    
+    cell_style = ParagraphStyle('CellStyle', parent=styles['Normal'], fontSize=9, leading=12, textColor=colors.HexColor("#334155"))
+    header_style = ParagraphStyle('HeaderStyle', parent=styles['Normal'], fontSize=10, leading=12, textColor=colors.white, fontName='Helvetica-Bold')
     
     story.append(Paragraph(tr_to_en("KURESEL SEYAHAT KITAPCIGI"), title_style))
-    story.append(Paragraph(tr_to_en("Global Rota Planlayici V2 ile Otonom Olarak Olusturulmustur"), subtitle_style))
+    tarz_ismi = seyahat_tarzi.split(" ")[0]
+    story.append(Paragraph(tr_to_en(f"Global Rota Planlayici V2 | Mod: {tarz_ismi}"), subtitle_style))
     story.append(Paragraph(tr_to_en(f"Tahmini Toplam Tur Butcesi (Ulasim + Aktiviteler): {genel_toplam_maliyet} EUR"), budget_style))
-    story.append(Spacer(1, 15))
+    story.append(Spacer(1, 10))
     
     start_dt_base = pd.Timestamp(f"2000-01-01 {start_time_input}")
     end_dt_base = pd.Timestamp(f"2000-01-01 {end_time_input}")
@@ -196,17 +207,27 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
         
         gunluk_rota = optimize_route(df_day, baslangic_lat, baslangic_lon, total_available_minutes)
         
-        story.append(Paragraph(tr_to_en(f"Gun {gun_no} - Sehir: {sehir_adi}"), day_heading))
+        # Google Maps Rota Linki Oluşturma
+        coords = [f"{row['lat']},{row['lon']}" for _, row in gunluk_rota.iterrows()]
+        gmaps_url = f"https://www.google.com/maps/dir/{'/'.join(coords)}"
         
-        table_data = [[tr_to_en("Saat Araligi"), tr_to_en("Durak Adi"), tr_to_en("Kategori & Ucret"), tr_to_en("Gecis / Ziyaret")]]
+        story.append(Paragraph(tr_to_en(f"Gun {gun_no} - Sehir: {sehir_adi}"), day_heading))
+        story.append(Paragraph(f'<a href="{gmaps_url}" color="blue">📍 Bu Gunun Rotasini Google Haritalarda Canli Baslat (Tikla)</a>', maps_link_style))
+        
+        table_data = [[
+            Paragraph(tr_to_en("Saat Araligi"), header_style), 
+            Paragraph(tr_to_en("Durak Adi"), header_style), 
+            Paragraph(tr_to_en("Kategori & Ucret"), header_style), 
+            Paragraph(tr_to_en("Gecis / Ziyaret"), header_style)
+        ]]
         
         if 'transit' in day_data:
             t = day_data['transit']
             table_data.append([
-                "SABAH", 
-                tr_to_en(f"Transit: {t['mesaj']}"), 
-                tr_to_en(f"Ulasim | {t['fiyat']} EUR"), 
-                tr_to_en(f"Kaynak: {t['kaynak']}")
+                Paragraph("SABAH", cell_style), 
+                Paragraph(tr_to_en(f"Transit: {t['mesaj']}"), cell_style), 
+                Paragraph(tr_to_en(f"Ulasim | {t['fiyat']} EUR"), cell_style), 
+                Paragraph(tr_to_en(f"Kaynak: {t['kaynak']}"), cell_style)
             ])
 
         current_time = start_dt_base
@@ -223,24 +244,29 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
             kat_str = tr_to_en(f"{row['kategori']} | {mekan_maliyet} EUR")
             sure_str = tr_to_en(f"Yol: {int(row['travel_time'])}dk | Sure: {row['ort_sure']}dk")
             
-            table_data.append([zaman_str, durak_str, kat_str, sure_str])
+            table_data.append([
+                Paragraph(zaman_str, cell_style), 
+                Paragraph(durak_str, cell_style), 
+                Paragraph(kat_str, cell_style), 
+                Paragraph(sure_str, cell_style)
+            ])
             
-        t = Table(table_data, colWidths=[80, 185, 105, 170])
+        t = Table(table_data, colWidths=[80, 190, 110, 160])
         t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2f5597")),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2563eb")),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor("#f9f9f9")),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
-            ('FONTSIZE', (0, 0), (-1, -1), 9),
-            ('TOPPADDING', (0, 1), (-1, -1), 5),
-            ('BOTTOMPADDING', (0, 1), (-1, -1), 5),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+            ('TOPPADDING', (0, 0), (-1, 0), 10),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.HexColor("#f8fafc"), colors.HexColor("#ffffff")]), 
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+            ('BOTTOMPADDING', (0, 1), (-1, -1), 8),
+            ('TOPPADDING', (0, 1), (-1, -1), 8),
         ]))
         
         story.append(t)
-        story.append(Spacer(1, 15))
+        story.append(Spacer(1, 20))
         
         if i < len(multi_day_plan) - 1:
             story.append(PageBreak())
@@ -251,21 +277,26 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
 
 
 # --- 4. CACHE VE YAPAY ZEKA MODÜLLERİ ---
-def cache_den_getir(sehir_adi, gun_sayisi):
+def cache_den_getir(sehir_adi, gun_sayisi, seyahat_tarzi):
     if supabase is None: return None
+    # Veritabanında izolasyon sağlamak için anahtarı tarz ile birleştiriyoruz (Örn: Prag_Ekonomik)
+    tarz_kisa_ad = seyahat_tarzi.split(" ")[0]
+    cache_key = f"{sehir_adi}_{tarz_kisa_ad}"
     try:
         response = supabase.table("sehir_rotalari_cache") \
-            .select("rota_jsonb").eq("sehir_adi", sehir_adi).eq("gun_sayisi", gun_sayisi).execute()
+            .select("rota_jsonb").eq("sehir_adi", cache_key).eq("gun_sayisi", gun_sayisi).execute()
         if len(response.data) > 0:
             return response.data[0]["rota_jsonb"]
         return None
     except Exception:
         return None
 
-def cache_e_kaydet(sehir_adi, gun_sayisi, rota_jsonb, ozel_istek_mi):
+def cache_e_kaydet(sehir_adi, gun_sayisi, rota_jsonb, ozel_istek_mi, seyahat_tarzi):
     if supabase is None or ozel_istek_mi: return
+    tarz_kisa_ad = seyahat_tarzi.split(" ")[0]
+    cache_key = f"{sehir_adi}_{tarz_kisa_ad}"
     try:
-        data = {"sehir_adi": sehir_adi, "gun_sayisi": gun_sayisi, "rota_jsonb": rota_jsonb, "ozel_istek_mi": ozel_istek_mi}
+        data = {"sehir_adi": cache_key, "gun_sayisi": gun_sayisi, "rota_jsonb": rota_jsonb, "ozel_istek_mi": ozel_istek_mi}
         supabase.table("sehir_rotalari_cache").insert(data).execute()
     except Exception:
         pass
@@ -288,14 +319,23 @@ def kullanici_niyetini_analiz_et(kullanici_girdisi):
     except Exception:
         return []
 
-def yapay_zekadan_sehir_rotasi_iste(sehir_adi, gun_sayisi, ana_istek):
+def yapay_zekadan_sehir_rotasi_iste(sehir_adi, gun_sayisi, ana_istek, seyahat_tarzi):
     model = genai.GenerativeModel('gemini-3.6-flash')
+    
+    # Seyahat tarzına göre Gemini'ye giden bütçe kurallarını belirliyoruz
+    if "Ekonomik" in seyahat_tarzi:
+        butce_kurali = "Bütçe: Çok Ucuz (0-15 EUR). Ücretsiz müzeler, halka açık parklar ve uygun fiyatlı sokak lezzetleri/fast food öner."
+    elif "Standart" in seyahat_tarzi:
+        butce_kurali = "Bütçe: Orta (15-40 EUR). Klasik turistik müzeler, popüler biletli lokasyonlar ve ortalama fiyatlı kafeler/restoranlar öner."
+    else:
+        butce_kurali = "Bütçe: Yüksek (50-150 EUR). Lüks restoranlar, premium turlar, sanat galerileri ve pahalı/exclusive deneyimler öner."
+
     prompt = f"""
     Kullanıcının ana isteği: {ana_istek}
     Görev: SADECE {sehir_adi} şehri için {gun_sayisi} günlük rota oluştur. Her gün 5-6 mekan olsun.
-    Mekanların ENLEM (lat) ve BOYLAM (lon) koordinatları gerçekçi olsun.
     
-    YENİ GÖREV: Her mekan için Euro cinsinden tahmini bir maliyet ekle. (Örn: Ücretsiz parklar için 0, Müzeler için 10-25, Restoranlar için 15-40).
+    YENİ GÖREV (SEYAHAT TARZI VE BÜTÇE HEDEFİ): {butce_kurali}
+    Seçtiğin mekanların 'tahmini_maliyet_eur' değerleri ve 'kategori' tipleri tamamen bu hedefe uygun olmalıdır. Koordinatları (lat, lon) gerçekçi ver.
     
     SADECE JSON FORMATINDA ÇIKTI VER:
     [
@@ -316,24 +356,23 @@ def yapay_zekadan_sehir_rotasi_iste(sehir_adi, gun_sayisi, ana_istek):
         return None
 
 # --- 5. ARAYÜZ VE GİRDİLER ---
-st.set_page_config(page_title="Global Rota Planlayıcı V2 + Bütçe", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Global Rota Planlayıcı V2", layout="wide", initial_sidebar_state="expanded")
 
-# CSS: Metin taşmalarını önle ve genel arayüz estetiğini iyileştir
 st.markdown("""
     <style>
     .stMarkdown, .stText, p, div { word-wrap: break-word; }
     .stTabs [data-baseweb="tab-list"] { gap: 10px; }
     .stTabs [data-baseweb="tab"] { border-radius: 4px 4px 0px 0px; padding: 10px 20px; }
+    a { text-decoration: none; font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
 
-# Popüler şehirler için görsel banner sözlüğü
 sehir_gorselleri = {
     "prag": "https://images.unsplash.com/photo-1519677100203-a0e668c92439?auto=format&fit=crop&w=1200&q=80",
     "amsterdam": "https://images.unsplash.com/photo-1534351590666-13e3e96b5017?auto=format&fit=crop&w=1200&q=80",
     "koln": "https://images.unsplash.com/photo-1558223616-e5db369cfbb8?auto=format&fit=crop&w=1200&q=80",
     "viyana": "https://images.unsplash.com/photo-1516550893923-42d28e5677af?auto=format&fit=crop&w=1200&q=80",
-    "paris": "https://images.unsplash.com/photo-1502602881469-411327c62c95?auto=format&fit=crop&w=1200&q=80",
+    "paris": "https://images.unsplash.com/photo-1499856871958-5b9627545d1a?auto=format&fit=crop&w=1200&q=80",
     "berlin": "https://images.unsplash.com/photo-1560969184-10fe8719e047?auto=format&fit=crop&w=1200&q=80",
     "londra": "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?auto=format&fit=crop&w=1200&q=80",
     "roma": "https://images.unsplash.com/photo-1552832230-c0197dd311b5?auto=format&fit=crop&w=1200&q=80"
@@ -344,6 +383,16 @@ with st.sidebar:
     
     st.subheader("📅 Seyahat Tarihi")
     start_date = st.date_input("Tur Başlangıç Tarihi", value=date.today() + timedelta(days=5))
+    
+    st.subheader("🎒 Seyahat Tarzı")
+    seyahat_tarzi = st.selectbox(
+        "Bütçe ve Konfor Beklentiniz",
+        [
+            "Ekonomik (Sırt Çantalı / Öğrenci)", 
+            "Standart (Klasik Turist)", 
+            "Premium (Lüks & Konfor)"
+        ]
+    )
     
     st.subheader("Günlük Zaman Planı")
     col1, col2 = st.columns(2)
@@ -364,8 +413,8 @@ with st.sidebar:
     generate_btn = st.button("Rotayı ve Bütçeyi Hesapla 🚀", use_container_width=True)
 
 # --- 6. ANA UYGULAMA MANTIĞI VE SEKMELER ---
-st.title("🗺️ Global Rota Planlayıcı V2 (Bütçe Motorlu)")
-st.caption("Seyahat rotanızı optimize eder, otobüs biletlerinizi bulur ve müze/yemek masraflarıyla genel bütçeyi hesaplar.")
+st.title("🗺️ Global Rota Planlayıcı V2")
+st.caption("Seyahat tarzınıza göre mekanları optimize eder, biletlerinizi bulur ve canlı navigasyon rotanızı çizer.")
 
 if generate_btn:
     if not user_ai_prompt:
@@ -386,18 +435,18 @@ if generate_btn:
                 gun = islem["gun_sayisi"]
                 ozel = islem["ozel_istek_mi"]
                 
-                with st.spinner(f"📍 {sehir} ({gun} Gün) için rota ve mekan maliyetleri hazırlanıyor..."):
+                with st.spinner(f"📍 {sehir} ({gun} Gün) için '{seyahat_tarzi}' rotası hazırlanıyor..."):
                     sehir_plani = None
                     if not ozel:
-                        sehir_plani = cache_den_getir(sehir, gun)
+                        sehir_plani = cache_den_getir(sehir, gun, seyahat_tarzi)
                         if sehir_plani:
-                            st.success(f"⚡ {sehir} rotası önbellekten çekildi!")
+                            st.success(f"⚡ {sehir} ({seyahat_tarzi.split(' ')[0]}) rotası önbellekten çekildi!")
                     
                     if not sehir_plani:
-                        sehir_plani = yapay_zekadan_sehir_rotasi_iste(sehir, gun, user_ai_prompt)
+                        sehir_plani = yapay_zekadan_sehir_rotasi_iste(sehir, gun, user_ai_prompt, seyahat_tarzi)
                         if sehir_plani:
                             st.success(f"🧠 {sehir} rotası sıfırdan çizildi ve bütçelendirildi!")
-                            cache_e_kaydet(sehir, gun, sehir_plani, ozel)
+                            cache_e_kaydet(sehir, gun, sehir_plani, ozel, seyahat_tarzi)
                     
                     if sehir_plani:
                         for gun_verisi in sehir_plani:
@@ -409,7 +458,6 @@ if generate_btn:
                 st.warning("Hiçbir şehir için rota oluşturulamadı. Lütfen tekrar deneyin.")
             else:
                 
-                # --- TRANSIT VE MALİYET HESAPLAMA ---
                 with st.spinner("🚌 Ulaşım biletleri ve toplam bütçe hesaplanıyor..."):
                     for i in range(len(multi_day_plan)):
                         gunluk_maliyet = 0.0
@@ -432,14 +480,12 @@ if generate_btn:
 
                 st.balloons()
                 
-                # --- DEVASA BÜTÇE EKRANI ---
                 st.markdown("---")
                 st.success(f"### 💶 Tahmini Toplam Tur Maliyeti: **{round(genel_toplam_maliyet, 2)} EUR**")
-                st.caption("*(Ulaşım biletleri, müze girişleri, yeme-içme ve aktiviteler dahildir. Otel/Uçak hariçtir.)*")
+                st.caption(f"*(Seçilen Profil: {seyahat_tarzi}. Ulaşım biletleri, müze girişleri, yeme-içme dahildir.)*")
                 st.markdown("---")
                 
-                # --- PDF İNDİRME BUTONU ---
-                full_pdf_bytes = generate_full_travel_booklet(multi_day_plan, start_time, end_time, round(genel_toplam_maliyet, 2))
+                full_pdf_bytes = generate_full_travel_booklet(multi_day_plan, start_time, end_time, round(genel_toplam_maliyet, 2), seyahat_tarzi)
                 st.download_button(
                     label="📥 BÜTÇELİ SEYAHAT KİTAPÇIĞINI PDF OLARAK İNDİR",
                     data=full_pdf_bytes,
@@ -458,10 +504,16 @@ if generate_btn:
                         city_name = day_data['sehir']
                         df_day = pd.DataFrame(day_data['mekanlar'])
                         
-                        # --- GÖRSEL BANNER (KAPAK FOTOĞRAFI) ---
-                        sehir_key = tr_to_en(city_name).lower()
-                        if sehir_key in sehir_gorselleri:
-                          st.image(sehir_gorselleri[sehir_key], use_container_width=True, caption=f"✨ {city_name} Manzarası")
+                        sehir_key_raw = tr_to_en(city_name).strip().lower()
+                        eslesen_gorsel = None
+                        
+                        for key, url in sehir_gorselleri.items():
+                            if key in sehir_key_raw:
+                                eslesen_gorsel = url
+                                break
+                                
+                        if eslesen_gorsel:
+                            st.image(eslesen_gorsel, use_container_width=True, caption=f"✨ {city_name} Manzarası")
                         
                         if 'transit' in day_data:
                             t_info = day_data['transit']
@@ -485,7 +537,13 @@ if generate_btn:
                         if gunluk_rota.empty:
                             st.warning("Zaman yetersiz!")
                         else:
-                            # Sütun oranları [1, 1] yapılarak yazı taşmaları engellendi
+                            # Harita Butonu Enjeksiyonu
+                            coords_list = [f"{row['lat']},{row['lon']}" for _, row in gunluk_rota.iterrows()]
+                            gmaps_url = f"https://www.google.com/maps/dir/{'/'.join(coords_list)}"
+                            
+                            st.markdown(f"### [📍 Bu Günün Rotasını Google Haritalarda Canlı Başlat]({gmaps_url})")
+                            st.write("")
+                            
                             map_col, timeline_col = st.columns([1, 1])
                             
                             with map_col:
