@@ -461,7 +461,7 @@ if generate_btn:
                         # --- GÖRSEL BANNER (KAPAK FOTOĞRAFI) ---
                         sehir_key = tr_to_en(city_name).lower()
                         if sehir_key in sehir_gorselleri:
-                            st.image(sehir_gorselleri[sehir_key], use_column_width=True, caption=f"✨ {city_name} Manzarası")
+                          st.image(sehir_gorselleri[sehir_key], use_container_width=True, caption=f"✨ {city_name} Manzarası")
                         
                         if 'transit' in day_data:
                             t_info = day_data['transit']
