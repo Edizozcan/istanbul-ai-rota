@@ -340,7 +340,8 @@ def cache_e_kaydet(sehir_adi, gun_sayisi, rota_jsonb, ozel_istek_mi, seyahat_tar
         pass
 
 def kullanici_niyetini_analiz_et(kullanici_girdisi):
-    model = genai.GenerativeModel('gemini-3.6-flash')
+    # SÜRÜM DÜZELTİLDİ: gemini-1.5-flash
+    model = genai.GenerativeModel('gemini-1.5-flash')
     prompt = f"""
     Sen bir veri ayrıştırıcısısın. İsteği analiz et: "{kullanici_girdisi}"
     Bana SADECE şu formatta JSON dön:
@@ -358,7 +359,8 @@ def kullanici_niyetini_analiz_et(kullanici_girdisi):
         return []
 
 def yapay_zekadan_sehir_rotasi_iste(sehir_adi, gun_sayisi, ana_istek, seyahat_tarzi, seyahat_hizi, sehir_butce_siniri):
-    model = genai.GenerativeModel('gemini-3.6-flash')
+    # SÜRÜM DÜZELTİLDİ: gemini-1.5-flash
+    model = genai.GenerativeModel('gemini-1.5-flash')
     
     if "Ekonomik" in seyahat_tarzi:
         butce_kurali = "Bütçe: Çok Ucuz (0-15 EUR). Ücretsiz müzeler, parklar ve sokak lezzetleri öner."
@@ -414,15 +416,19 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# KÖLN LİNKİ STABİL BİR KAYNAKLA GÜNCELLENDİ
 sehir_gorselleri = {
     "prag": "https://images.unsplash.com/photo-1519677100203-a0e668c92439?auto=format&fit=crop&w=1200&q=80",
     "amsterdam": "https://images.unsplash.com/photo-1534351590666-13e3e96b5017?auto=format&fit=crop&w=1200&q=80",
-    "koln": "https://images.unsplash.com/photo-1558223616-e5db369cfbb8?auto=format&fit=crop&w=1200&q=80",
+    "koln": "https://images.unsplash.com/photo-1572889650742-9907159781ce?auto=format&fit=crop&w=1200&q=80",
     "viyana": "https://images.unsplash.com/photo-1516550893923-42d28e5677af?auto=format&fit=crop&w=1200&q=80",
     "paris": "https://images.unsplash.com/photo-1499856871958-5b9627545d1a?auto=format&fit=crop&w=1200&q=80",
     "berlin": "https://images.unsplash.com/photo-1560969184-10fe8719e047?auto=format&fit=crop&w=1200&q=80",
     "londra": "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?auto=format&fit=crop&w=1200&q=80",
-    "roma": "https://images.unsplash.com/photo-1552832230-c0197dd311b5?auto=format&fit=crop&w=1200&q=80"
+    "roma": "https://images.unsplash.com/photo-1552832230-c0197dd311b5?auto=format&fit=crop&w=1200&q=80",
+    "brugge": "https://images.unsplash.com/photo-1555881400-74d7acaacd8b?auto=format&fit=crop&w=1200&q=80",
+    "bruksel": "https://images.unsplash.com/photo-1562923689-536f9a0c2c31?auto=format&fit=crop&w=1200&q=80",
+    "antwerp": "https://images.unsplash.com/photo-1616788220084-5f9630c76ce8?auto=format&fit=crop&w=1200&q=80"
 }
 
 with st.sidebar:
@@ -484,7 +490,7 @@ if generate_btn:
                 if maksimum_butce > 0 and toplam_gun > 0:
                     sehir_butcesi = int((maksimum_butce / toplam_gun) * gun)
                 
-                with st.spinner(f"📍 {sehir} ({gun} Gün) için rota hesaplanıyor..."):
+                with st.spinner(f"📍 {sehir} ({gun} Gün) için rota hesaplanıyor... (Lütfen Bekleyin)"):
                     sehir_plani = None
                     if not ozel:
                         sehir_plani = cache_den_getir(sehir, gun, seyahat_tarzi, seyahat_hizi, sehir_butcesi)
@@ -496,12 +502,17 @@ if generate_btn:
                         if sehir_plani:
                             st.success(f"🧠 {sehir} rotası sıfırdan çizildi!")
                             cache_e_kaydet(sehir, gun, sehir_plani, ozel, seyahat_tarzi, seyahat_hizi, sehir_butcesi)
+                        else:
+                            st.error(f"❌ {sehir} için rota oluşturulamadı! (API Hız Sınırı veya Aşırı Yüklenme)")
                     
                     if sehir_plani:
                         for gun_verisi in sehir_plani:
                             gun_verisi["gun"] = genel_gun_sayaci
                             multi_day_plan.append(gun_verisi)
                             genel_gun_sayaci += 1
+                
+                # ÇOK ÖNEMLİ: API'Yİ BOĞMAMAK İÇİN BEKLEME SÜRESİ EKLENDİ
+                sleep(4)
 
             if not multi_day_plan:
                 st.warning("Hiçbir şehir için rota oluşturulamadı. Lütfen tekrar deneyin.")
@@ -554,7 +565,6 @@ if st.session_state.plan_olusturuldu:
     st.caption(f"*(Seçilen Profil: {st.session_state.seyahat_tarzi} | Hız: {st.session_state.seyahat_hizi})*")
     st.markdown("---")
     
-    # İndirme Butonlarını Yan Yana Koyalım
     col_dl1, col_dl2 = st.columns(2)
     with col_dl1:
         st.download_button(
