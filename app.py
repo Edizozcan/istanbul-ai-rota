@@ -358,7 +358,7 @@ def cache_e_kaydet(sehir_adi, gun_sayisi, rota_jsonb, ozel_istek_mi, seyahat_tar
         pass
 
 def kullanici_niyetini_analiz_et(kullanici_girdisi):
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-3.6-flash')
     prompt = f"""
     Sen bir veri ayrıştırıcısısın. İsteği analiz et: "{kullanici_girdisi}"
     Bana SADECE şu formatta JSON dön:
@@ -376,7 +376,7 @@ def kullanici_niyetini_analiz_et(kullanici_girdisi):
         return []
 
 def yapay_zekadan_sehir_rotasi_iste(sehir_adi, gun_sayisi, ana_istek, seyahat_tarzi, seyahat_hizi, sehir_butce_siniri, dil):
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-3.6-flash')
     
     # Bütçe, Hız ve Dil Kuralları
     butce_kurali = "0-15 EUR. Ücretsiz müzeler, parklar." if "Ekonomik" in seyahat_tarzi else ("15-40 EUR. Popüler lokasyonlar." if "Standart" in seyahat_tarzi else "50-150 EUR. Lüks restoranlar, VIP turlar.")
