@@ -1,8 +1,8 @@
 streamlit
 pandas
+google-generativeai
 folium
 streamlit-folium
 reportlab
 supabase
-google-generativeai
 requests
