@@ -6,3 +6,5 @@ streamlit-folium
 reportlab
 supabase
 requests
+reportlab
+Pillow
