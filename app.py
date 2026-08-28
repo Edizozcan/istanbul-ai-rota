@@ -11,12 +11,14 @@ import io
 import unicodedata
 import requests
 
+# Yeni Manzaralı Kapak Motorumuz (Buraya eklendi)
+from pdf_generator import generate_itinerary_pdf
+
 # ReportLab kütüphaneleri
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
-from pdf_generator import generate_itinerary_pdf
 
 # Supabase kütüphanesi
 from supabase import create_client, Client
@@ -219,7 +221,6 @@ def generate_full_travel_booklet(multi_day_plan, start_time_input, end_time_inpu
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
     story = []
     
-    # Çoklu Dil Sözlüğü (PDF İçin)
     dict_pdf = {
         "Türkçe": {
             "title": "KÜRESEL SEYAHAT KİTAPÇIĞI",
@@ -543,6 +544,8 @@ if generate_btn:
                 st.session_state.seyahat_hizi = seyahat_hizi
                 st.session_state.uygulama_dili = uygulama_dili
                 
+                # İstersen ileride st.session_state.full_pdf_bytes üretimini tamamen silebilirsin,
+                # Şimdilik eski fonksiyonu da çalışır bıraktım ancak butona YENİ kapak dosyasını bağlayacağız.
                 st.session_state.full_pdf_bytes = generate_full_travel_booklet(
                     multi_day_plan, start_time, end_time, round(genel_toplam_maliyet, 2), seyahat_tarzi, seyahat_hizi, uygulama_dili
                 )
@@ -595,17 +598,21 @@ if st.session_state.plan_olusturuldu:
     st.success(f"### 💶 {'Toplam Tur Maliyeti' if st.session_state.uygulama_dili == 'Türkçe' else 'Total Tour Cost'}: **{round(st.session_state.genel_toplam_maliyet, 2)} EUR**")
     st.markdown("---")
     
+    # -------------------------------------------------------------
+    # YENİ PDF DOSYASININ ÜRETİLDİĞİ VE BUTONA BAĞLANDIĞI YER
+    hedef_sehir_degiskenin = st.session_state.multi_day_plan[0]['sehir'] if len(st.session_state.multi_day_plan) > 0 else "Avrupa"
+    butce_degiskenin = round(st.session_state.genel_toplam_maliyet, 2)
+    yeni_pdf_dosyasi = generate_itinerary_pdf(hedef_sehir_degiskenin, butce_degiskenin)
+    
     col_dl1, col_dl2 = st.columns(2)
     with col_dl1:
-# Varsayalım ki hedef şehir "destination" ve bütçe "total_cost" değişkeninde duruyor
-pdf_file = generate_itinerary_pdf(destination, total_cost)
-
-st.download_button(
-    label="📄 PDF Seyahat Broşürünü İndir",
-    data=pdf_file,
-    file_name=f"{destination}_Gezi_Rehberi.pdf",
-    mime="application/pdf"
-)
+        st.download_button(
+            label="📥 PDF İNDİR" if st.session_state.uygulama_dili == "Türkçe" else "📥 DOWNLOAD PDF",
+            data=yeni_pdf_dosyasi, # YENİ TASARIM BURAYA BAĞLANDI
+            file_name="Avrupa_Turu.pdf" if st.session_state.uygulama_dili == "Türkçe" else "Europe_Tour.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
     with col_dl2:
         st.download_button(
             label="📅 TAKVİME EKLE (.ICS)" if st.session_state.uygulama_dili == "Türkçe" else "📅 ADD TO CALENDAR (.ICS)",
@@ -614,6 +621,7 @@ st.download_button(
             mime="text/calendar",
             use_container_width=True
         )
+    # -------------------------------------------------------------
         
     st.markdown("---")
     
