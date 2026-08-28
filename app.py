@@ -16,6 +16,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
+from pdf_generator import generate_itinerary_pdf
 
 # Supabase kütüphanesi
 from supabase import create_client, Client
@@ -596,13 +597,15 @@ if st.session_state.plan_olusturuldu:
     
     col_dl1, col_dl2 = st.columns(2)
     with col_dl1:
-        st.download_button(
-            label="📥 PDF İNDİR" if st.session_state.uygulama_dili == "Türkçe" else "📥 DOWNLOAD PDF",
-            data=st.session_state.full_pdf_bytes,
-            file_name="Avrupa_Turu.pdf" if st.session_state.uygulama_dili == "Türkçe" else "Europe_Tour.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
+# Varsayalım ki hedef şehir "destination" ve bütçe "total_cost" değişkeninde duruyor
+pdf_file = generate_itinerary_pdf(destination, total_cost)
+
+st.download_button(
+    label="📄 PDF Seyahat Broşürünü İndir",
+    data=pdf_file,
+    file_name=f"{destination}_Gezi_Rehberi.pdf",
+    mime="application/pdf"
+)
     with col_dl2:
         st.download_button(
             label="📅 TAKVİME EKLE (.ICS)" if st.session_state.uygulama_dili == "Türkçe" else "📅 ADD TO CALENDAR (.ICS)",
