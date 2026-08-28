@@ -503,6 +503,33 @@ with st.sidebar:
     st.markdown("---")
     generate_btn = st.button("Rotayı Hesapla 🚀" if uygulama_dili == "Türkçe" else "Generate Route 🚀", use_container_width=True)
 
+    # --- GİZLİ ADMIN PANELİ ---
+    st.markdown("---")
+    # type="password" parametresi sayesinde yazılanlar yıldız (****) olarak görünür
+    admin_sifre = st.text_input("🔑 System Override", type="password")
+
+    if admin_sifre == "YTU2026":  # Kendi gizli şifreni buraya yazabilirsin
+        st.success("Admin Modu Aktif" if uygulama_dili == "Türkçe" else "Admin Mode Active")
+        st.markdown("### 📊 Veritabanı Durumu")
+        
+        if supabase:
+            try:
+                # Supabase'den cache tablosunun boyutunu çekiyoruz
+                cache_verileri = supabase.table("sehir_rotalari_cache").select("id", count="exact").execute()
+                toplam_kayit = cache_verileri.count
+                
+                st.metric(
+                    label="Önbelleğe Alınan Rota", 
+                    value=toplam_kayit, 
+                    delta="Veri birikiyor" if toplam_kayit > 20 else "Optimum Seviye",
+                    delta_color="inverse"
+                )
+                
+                if st.button("🗑️ Tüm Cache'i Temizle", use_container_width=True):
+                    st.warning("Veritabanı silme komutu (DELETE) güvenlik için şu an pasif.")
+            except Exception as e:
+                st.error("Metrikler okunamadı.")
+
 # --- 6. ANA UYGULAMA MANTIĞI ---
 st.title("🗺️ Global Route Planner V2" if uygulama_dili == "English" else "🗺️ Global Rota Planlayıcı V2")
 
